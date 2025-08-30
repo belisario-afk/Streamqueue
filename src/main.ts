@@ -43,13 +43,14 @@ const REPO_BASE = (() => {
   return parts.length ? `/${parts[0]}/` : "/";
 })();
 
-// IMPORTANT: Spotify does NOT accept fragment (#) in redirect_uri for Authorization Code flow.
-// Use a real path (/callback). GitHub Pages will serve public/404.html for this path,
-// which then rewrites to /#/callback so our SPA can read the code from the hash.
+// Use the app root (no /callback) to avoid GitHub Pages 404s.
+// Register this exact URL in Spotify Dashboard:
+// - https://belisario-afk.github.io/Streamqueue/
+// - http://127.0.0.1:5173/
 const REDIRECT_URI =
   location.hostname === "127.0.0.1" || location.hostname === "localhost"
-    ? "http://127.0.0.1:5173/callback"
-    : `${location.origin}${REPO_BASE}callback`;
+    ? "http://127.0.0.1:5173/"
+    : `${location.origin}${REPO_BASE}`;
 
 const scopes = [
   "user-read-private",
@@ -207,7 +208,6 @@ function hookQualityPanel() {
       el?.addEventListener(evt, apply);
     });
   });
-  // Do not call apply() until engine is initialized; we trigger it after initEngine().
 }
 
 function hookAccessibility() {
@@ -304,8 +304,6 @@ function hookControls() {
       elements.screensaver.classList.add("active");
     }
   }, 1000);
-
-  // Recording will be initialized after engine is ready.
 }
 
 function initRecordingUI() {
@@ -363,8 +361,6 @@ async function onPlayerState() {
     }
     cacheTrackMeta(st.item).catch(() => {});
   }
-
-  // Beat/phrase schedule & auto crossfade managed in director
 }
 
 async function main() {
@@ -396,7 +392,6 @@ async function main() {
 
   // Now that engine exists, we can safely initialize UI hooks.
   hookQualityPanel();
-  // Trigger one apply so quality takes effect after engine init
   elements.qScale.dispatchEvent(new Event("input"));
   hookAccessibility();
   hookVJ();
@@ -414,7 +409,7 @@ async function main() {
         await transferPlayback(deviceId, true);
       }
     },
-    (state) => {
+    () => {
       onPlayerState();
     }
   );
@@ -443,13 +438,9 @@ async function main() {
     elements
   });
 
-  // Adaptive frame governor default 60fps
   setFrameGovernorTarget(60);
-
-  // Update seek UI periodically
   setInterval(onPlayerState, 1000);
 
-  // Scene picker manual crossfade
   elements.scenePicker.addEventListener("change", () => {
     const v = elements.scenePicker.value;
     if (v === "auto") autoPickScene();
