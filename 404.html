@@ -2,15 +2,20 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>dwdw</title>
-    <meta http-equiv="refresh" content="0;url=/dwdw/" />
+    <title>SPA Redirect</title>
     <script>
-      // GitHub Pages SPA fallback: rewrite to index with original path stored in hash
-      (function() {
+      // GitHub Pages SPA fallback:
+      // Redirect unknown routes to the app root (repo base) and preserve the original path in the hash.
+      (function () {
         var l = window.location;
-        var path = l.pathname.replace(/^\/dwdw/, "");
-        if (path && path !== "/") {
-          l.replace("/dwdw/#" + path + l.search + l.hash);
+        // repo name is the first path segment on user/organization pages
+        var parts = l.pathname.split("/").filter(Boolean);
+        var repo = parts.length ? (parts[0]) : "";
+        var base = repo ? ("/" + repo + "/") : "/";
+        var origPath = l.pathname.replace(base, "/");
+        // If we are not already at base, redirect to base with hash
+        if (l.pathname !== base) {
+          l.replace(base + "#" + origPath + l.search + l.hash);
         }
       })();
     </script>
