@@ -3,9 +3,12 @@
   <head>
     <meta charset="utf-8" />
     <title>SPA Redirect</title>
+    <meta name="robots" content="noindex" />
     <script>
       // GitHub Pages SPA fallback:
-      // Redirect unknown routes to the app root (repo base) and preserve the original path in the hash.
+      // - Works for any repo name (e.g., /Streamqueue/).
+      // - If the requested path isn't found (like /callback), Pages serves this 404.html.
+      // - We redirect to the app base and preserve the original path + query in the hash.
       (function () {
         var l = window.location;
         // repo name is the first path segment on user/organization pages
@@ -13,10 +16,10 @@
         var repo = parts.length ? parts[0] : "";
         var base = repo ? "/" + repo + "/" : "/";
         var origPath = l.pathname.replace(base, "/");
-        // If we are not already at base, redirect to base with hash
-        if (l.pathname !== base) {
-          l.replace(base + "#" + origPath + l.search + l.hash);
-        }
+        // Redirect to app base with original path + query moved into the hash.
+        // Example:
+        //   /Streamqueue/callback?code=... -> /Streamqueue/#/callback?code=...
+        l.replace(base + "#" + origPath + l.search + l.hash);
       })();
     </script>
   </head>

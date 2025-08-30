@@ -45,13 +45,33 @@ export async function login(clientId: string, redirectUri: string, scopes: strin
   location.href = `https://accounts.spotify.com/authorize?${params.toString()}`;
 }
 
+// Helper to detect repo base like "/Streamqueue/" dynamically
+function repoBase() {
+  const parts = location.pathname.split("/").filter(Boolean);
+  return parts.length ? `/${parts[0]}/` : "/";
+}
+
 export async function ensureAuth(clientId: string, redirectUri: string, scopes: string[]) {
-  // Handle callback if code present in URL (supports both /callback path and hash fallback)
   const url = new URL(location.href);
-  const isCallbackPath = url.pathname.endsWith("/callback");
-  const code = url.searchParams.get("code");
-  const error = url.searchParams.get("error");
-  if (isCallbackPath && (code || error)) {
+
+  // Case 1: Direct callback path (/.../callback?code=...)
+  const directCallback = url.pathname.endsWith("/callback");
+  let code = url.searchParams.get("code");
+  let error = url.searchParams.get("error");
+
+  // Case 2: GitHub Pages 404 fallback put the callback into the hash:
+  // /<repo>/#/callback?code=...
+  const hash = location.hash || "";
+  const hashCallback = hash.startsWith("#/callback");
+  if (!directCallback && !code && !error && hashCallback) {
+    const qIndex = hash.indexOf("?");
+    const q = qIndex >= 0 ? hash.slice(qIndex + 1) : "";
+    const hParams = new URLSearchParams(q);
+    code = hParams.get("code") || null;
+    error = hParams.get("error") || null;
+  }
+
+  if ((directCallback || hashCallback) && (code || error)) {
     if (error) {
       console.error("Spotify auth error:", error);
       return;
@@ -76,12 +96,13 @@ export async function ensureAuth(clientId: string, redirectUri: string, scopes: 
     const data = (await res.json()) as Omit<TokenInfo, "obtained_at">;
     currentToken = { ...data, obtained_at: Date.now() };
     setJSON(TOKEN_KEY, currentToken);
-    // Replace path back to the app base dynamically (works for any repo name)
-    const parts = location.pathname.split("/").filter(Boolean);
-    const base = parts.length ? `/${parts[0]}/` : "/";
-    history.replaceState({}, "", base);
+
+    // Clean URL back to the app base (removes /callback or #/callback and query)
+    history.replaceState({}, "", repoBase());
     return;
   }
+
+  // Load token and refresh if needed (note: refresh requires refresh_token which Spotify may include)
   currentToken = getJSON<TokenInfo>(TOKEN_KEY);
   if (currentToken && isExpired(currentToken)) {
     await refresh(clientId);
