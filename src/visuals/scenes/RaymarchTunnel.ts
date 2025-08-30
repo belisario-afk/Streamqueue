@@ -1,100 +1,136 @@
 import * as THREE from "three";
+import type { IScene, SceneConfig, SceneConfigSchema } from "../engine";
 
-export class TunnelScene {
-  scene = new THREE.Scene();
+type Opts = {
+  renderer: THREE.WebGLRenderer;
+  camera: THREE.PerspectiveCamera;
+  quality: () => { raymarchSteps: number };
+  accessibility: () => any;
+  palette: () => string[];
+};
+
+export class TunnelScene implements IScene {
   name = "tunnel";
-  private quad: THREE.Mesh;
-  private mat: THREE.ShaderMaterial;
-  private steps = 512;
-  private palette = ["#59ffa9","#5aaaff","#ff59be","#ffe459","#ff8a59"];
-  private params = { intensity: 0.7, speed: 1.0, chroma: 0.12 };
+  scene = new THREE.Scene();
 
-  constructor(private opts: any) {
-    const geo = new THREE.PlaneGeometry(2, 2);
-    this.steps = Math.max(256, Math.min(1024, this.opts.quality().raymarchSteps));
-    this.mat = new THREE.ShaderMaterial({
-      uniforms: {
-        uTime: { value: 0 },
-        uSteps: { value: this.steps },
-        uPalette: { value: this.palette.map(c => new THREE.Color(c)) },
-        uIntensity: { value: this.params.intensity },
-        uSpeed: { value: this.params.speed },
-        uChroma: { value: this.params.chroma }
-      },
-      fragmentShader: `
-        precision highp float;
-        uniform float uTime, uSteps, uIntensity, uSpeed, uChroma;
-        uniform vec3 uPalette[5];
+  private mesh: THREE.Mesh | null = null;
+  private uniforms: Record<string, THREE.IUniform> = {};
+  private cfg: SceneConfig;
+
+  constructor(private opts: Opts) {
+    this.cfg = {
+      steps: 256,
+      speed: 0.7,
+      twist: 1.0,
+      radius: 1.2,
+      brightness: 1.0
+    };
+    this.build();
+  }
+
+  getConfigSchema(): SceneConfigSchema {
+    return {
+      steps: { label: "Ray steps", type: "range", min: 64, max: 768, step: 32, default: 256 },
+      speed: { label: "Motion speed", type: "range", min: 0.2, max: 2, step: 0.05, default: 0.7 },
+      twist: { label: "Twist", type: "range", min: 0, max: 2.5, step: 0.05, default: 1.0 },
+      radius: { label: "Radius", type: "range", min: 0.6, max: 2.5, step: 0.05, default: 1.2 },
+      brightness: { label: "Brightness", type: "range", min: 0.5, max: 2.0, step: 0.05, default: 1.0 }
+    };
+  }
+
+  getConfig(): SceneConfig {
+    return { ...this.cfg };
+  }
+
+  setConfig(partial: Partial<SceneConfig>) {
+    this.cfg = { ...this.cfg, ...partial };
+  }
+
+  private build() {
+    this.uniforms = {
+      uTime: { value: 0 },
+      uSteps: { value: Number(this.cfg.steps) },
+      uSpeed: { value: Number(this.cfg.speed) },
+      uTwist: { value: Number(this.cfg.twist) },
+      uRadius: { value: Number(this.cfg.radius) },
+      uBright: { value: Number(this.cfg.brightness) },
+      uPalette: { value: this.opts.palette().map((c) => new THREE.Color(c)) }
+    };
+
+    const geom = new THREE.PlaneGeometry(2, 2);
+    const mat = new THREE.ShaderMaterial({
+      uniforms: this.uniforms,
+      vertexShader: `
         varying vec2 vUv;
-        float sdTorus( vec3 p, vec2 t ) {
-          vec2 q = vec2(length(p.xz)-t.x,p.y);
-          return length(q)-t.y;
-        }
-        float map(vec3 p, out vec3 col) {
-          float k = 0.0;
-          // kaleidoscope fold
-          p.xy = abs(p.xy); p.xz = abs(p.xz);
-          float d = sdTorus(p + vec3(0.0, 0.0, sin(uTime*0.5)*0.3), vec2(1.0, 0.25));
-          k = smoothstep(1.0, 0.0, d+0.3);
-          col = mix(uPalette[0], uPalette[1], k);
-          return d;
-        }
-        vec3 raymarch(vec3 ro, vec3 rd){
-          float t = 0.0;
-          vec3 col = vec3(0.0);
-          for (int i=0; i<1024; i++){
-            if (float(i) > uSteps) break;
-            vec3 p = ro + rd * t;
-            vec3 c; float d = map(p, c);
-            float glow = clamp(0.02 / max(0.001, d+0.02), 0.0, 1.0);
-            col += c * glow * 0.015 * uIntensity;
-            t += clamp(d*0.6, 0.01, 0.2);
-            if (t > 20.0) break;
-          }
-          return col;
-        }
         void main(){
-          vec2 uv = (gl_FragCoord.xy / vec2(${Math.max(1, window.innerWidth)}., ${Math.max(1, window.innerHeight)}.)) * 2.0 - 1.0;
-          uv.x *= ${window.innerWidth / Math.max(1, window.innerHeight)}.;
-          float t = uTime * uSpeed;
-          vec3 ro = vec3(0.0, 0.0, -4.0 + sin(t*0.2)*0.5);
-          vec3 rd = normalize(vec3(uv, 1.5));
-          vec3 col = raymarch(ro, rd);
-          // chromatic aberration
-          vec2 shift = uv * uChroma * 0.001;
-          vec3 colR = raymarch(ro, normalize(vec3(uv+shift, 1.5)));
-          vec3 colB = raymarch(ro, normalize(vec3(uv-shift, 1.5)));
-          col = vec3(colR.r, col.g, colB.b);
-          col = pow(col, vec3(1.2));
-          gl_FragColor = vec4(col, 1.0);
+          vUv = uv*2.0-1.0;
+          gl_Position = vec4(position,1.0);
         }
       `,
-      vertexShader: `varying vec2 vUv; void main(){ vUv=uv; gl_Position=vec4(position.xy,0.,1.); }`
+      fragmentShader: `
+        precision mediump float;
+        varying vec2 vUv;
+        uniform float uTime,uTwist,uRadius,uSpeed,uBright;
+        uniform float uSteps;
+        uniform vec3 uPalette[5];
+
+        float map(vec3 p){
+          float r = uRadius + 0.15*sin(p.z*0.7 + uTime*0.7);
+          return length(p.xy) - r;
+        }
+
+        vec3 pal(float t){
+          vec3 a = uPalette[0];
+          vec3 b = uPalette[1];
+          vec3 c = uPalette[2];
+          return mix(a,b,0.5+0.5*sin(t)) + 0.25*c;
+        }
+
+        void main(){
+          vec3 ro = vec3(0.0,0.0, uTime*uSpeed*2.0);
+          vec3 rd = normalize(vec3(vUv, 1.2));
+          float twist = uTwist*(0.4+0.6*sin(uTime*0.2));
+          rd.xy = mat2(cos(twist), -sin(twist), sin(twist), cos(twist))*rd.xy;
+
+          float t = 0.0;
+          float glow = 0.0;
+          for (int i=0;i<768;i++){
+            if (float(i) >= uSteps) break;
+            vec3 p = ro + rd * t;
+            float d = map(p);
+            if (d < 0.002) { glow += 0.03; d = 0.005; }
+            t += d*0.6;
+            glow += 0.006/(0.01 + d*d*50.0);
+            if (t>30.0) break;
+          }
+          vec3 col = pal(t*0.05) * glow * uBright;
+          gl_FragColor = vec4(col, 1.0);
+        }
+      `
     });
-    this.quad = new THREE.Mesh(geo, this.mat);
-    this.scene.add(this.quad);
+
+    this.mesh = new THREE.Mesh(geom, mat);
+    this.scene.add(this.mesh);
   }
-  start() {}
-  stop() {
-    this.quad.geometry.dispose(); this.mat.dispose();
-  }
-  update(dt: number, t: number) {
-    this.mat.uniforms.uTime.value = t;
-  }
+
   setPalette(colors: string[]) {
-    this.palette = colors;
-    this.mat.uniforms.uPalette.value = colors.map(c => new THREE.Color(c));
+    (this.mesh!.material as THREE.ShaderMaterial).uniforms.uPalette.value = colors.map((c) => new THREE.Color(c));
   }
-  onMacro(name: string, value: number) {
-    if (name === "intensity") this.mat.uniforms.uIntensity.value = value;
-    if (name === "speed") this.mat.uniforms.uSpeed.value = value;
-    if (name === "glitch") this.mat.uniforms.uChroma.value = 0.05 + value * 0.25;
+
+  start(): void {}
+  stop(): void {}
+
+  update(_dt: number, t: number): void {
+    const u = (this.mesh!.material as THREE.ShaderMaterial).uniforms;
+    u.uTime.value = t;
+    u.uSteps.value = Number(this.cfg.steps);
+    u.uTwist.value = Number(this.cfg.twist);
+    u.uRadius.value = Number(this.cfg.radius);
+    u.uSpeed.value = Number(this.cfg.speed);
+    u.uBright.value = Number(this.cfg.brightness);
   }
-  setQuality(q: any) {
-    this.mat.uniforms.uSteps.value = Math.max(256, Math.min(1024, q.raymarchSteps));
-  }
-  onExplode() {
-    this.mat.uniforms.uIntensity.value = Math.min(3.0, (this.mat.uniforms.uIntensity.value as number) + 0.6);
-    setTimeout(() => this.mat.uniforms.uIntensity.value = 0.7, 600);
+
+  onMacro(name: string, value: number): void {
+    if (name === "intensity") this.cfg.brightness = 0.8 + value * 0.8;
   }
 }

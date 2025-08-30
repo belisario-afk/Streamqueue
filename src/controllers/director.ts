@@ -1,16 +1,15 @@
 import { crossfadeToScene } from "@visuals/engine";
 import { getCurrentPlayback, getCurrentTrackFeatures } from "@spotify/api";
 
-// Minimal, defensive Director. If its UI isn't present, it silently no-ops.
 type DirectorInitOpts = {
   onBeat?: (bar?: number) => void;
   onPhraseBoundary?: (phraseIndex: number) => void;
-  elements?: any; // optional, not required
+  elements?: any;
 };
 
 type Cue = {
   bar: number;
-  type: string; // e.g., "explode", "scene:particles", etc.
+  type: string;
 };
 
 let cues: Cue[] = [];
@@ -27,9 +26,7 @@ function updateCueList() {
     list.textContent = "No cues";
     return;
   }
-  list.innerHTML = cues
-    .map((c) => `<div class="tag">bar ${c.bar}: ${c.type}</div>`)
-    .join("");
+  list.innerHTML = cues.map((c) => `<div class="tag">bar ${c.bar}: ${c.type}</div>`).join("");
 }
 
 function wireUI() {
@@ -61,13 +58,12 @@ function wireUI() {
 
 function applyCue(cue: Cue) {
   if (cue.type === "explode") {
-    // Could dispatch an event the engine listens to
     window.dispatchEvent(new CustomEvent("vj-explode"));
     return;
   }
   if (cue.type.startsWith("scene:")) {
     const scene = cue.type.split(":")[1] as any;
-    crossfadeToScene(scene, 0); // safe instant switch
+    crossfadeToScene(scene, 0);
     return;
   }
 }
@@ -79,37 +75,27 @@ async function pollPlayback(opts?: DirectorInitOpts) {
 
     const progressMs = playback.progress_ms ?? 0;
     const features = await getCurrentTrackFeatures(playback.item.id).catch(() => null);
-    // If we have analysis/tempo, estimate bar length; else fallback to 2s
     const beatDuration = features?.tempo ? 60_000 / features.tempo : 2000;
     const barDuration = beatDuration * 4;
     const barIndex = Math.floor(progressMs / barDuration);
 
-    // Fire onBeat (coarse)
     opts?.onBeat?.(barIndex);
 
-    // Run any cues scheduled at this bar
-    cues
-      .filter((c) => c.bar === barIndex)
-      .forEach((c) => applyCue(c));
+    cues.filter((c) => c.bar === barIndex).forEach((c) => applyCue(c));
 
-    // Optional phrase switch
     if (autoCrossfade && barIndex % 16 === 0 && barIndex > 0) {
       opts?.onPhraseBoundary?.(barIndex / 16);
-      // Keep it conservative: switch within safe set if you derive scene elsewhere
-      // crossfadeToScene("particles" as any, 0);
     }
   } catch {
-    // swallow errors; this is a soft director
+    // silent
   }
 }
 
 let intervalId: number | null = null;
 
 export function initDirector(opts: DirectorInitOpts = {}) {
-  // Wire UI only if present
   wireUI();
 
-  // Start polling playback to drive beats/phrases/cues
   if (intervalId !== null) {
     clearInterval(intervalId);
     intervalId = null;

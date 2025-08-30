@@ -1,82 +1,131 @@
 import * as THREE from "three";
+import type { IScene, SceneConfig, SceneConfigSchema } from "../engine";
 
-export class TerrainScene {
-  scene = new THREE.Scene();
+type Opts = {
+  renderer: THREE.WebGLRenderer;
+  camera: THREE.PerspectiveCamera;
+  quality: () => any;
+  accessibility: () => any;
+  palette: () => string[];
+};
+
+export class TerrainScene implements IScene {
   name = "terrain";
-  private mesh: THREE.Mesh;
-  private mat: THREE.ShaderMaterial;
-  private palette = ["#59ffa9","#5aaaff","#ff59be","#ffe459","#ff8a59"];
-  private params = { intensity: 0.7, speed: 1.0 };
+  scene = new THREE.Scene();
 
-  constructor(private opts: any) {
-    const geo = new THREE.PlaneGeometry(20, 20, 256, 256);
-    this.mat = new THREE.ShaderMaterial({
-      uniforms: {
-        uTime: { value: 0 },
-        uPalette: { value: this.palette.map(c => new THREE.Color(c)) },
-        uIntensity: { value: this.params.intensity },
-        uSpeed: { value: this.params.speed }
-      },
+  private mesh: THREE.Mesh | null = null;
+  private uniforms: Record<string, THREE.IUniform> = {};
+  private cfg: SceneConfig;
+
+  constructor(private opts: Opts) {
+    this.cfg = {
+      scale: 1.0,
+      amplitude: 0.6,
+      speed: 0.4,
+      wireframe: false,
+      shading: "lambert"
+    };
+    this.build();
+  }
+
+  getConfigSchema(): SceneConfigSchema {
+    return {
+      scale: { label: "Noise scale", type: "range", min: 0.2, max: 3, step: 0.05, default: 1.0 },
+      amplitude: { label: "Amplitude", type: "range", min: 0.1, max: 1.5, step: 0.05, default: 0.6 },
+      speed: { label: "Scroll speed", type: "range", min: 0.1, max: 2, step: 0.05, default: 0.4 },
+      wireframe: { label: "Wireframe", type: "checkbox", default: false },
+      shading: { label: "Shading", type: "select", options: [{value:"flat",label:"Flat"},{value:"lambert",label:"Lambert"}], default: "lambert" }
+    };
+  }
+
+  getConfig(): SceneConfig {
+    return { ...this.cfg };
+  }
+
+  setConfig(partial: Partial<SceneConfig>) {
+    this.cfg = { ...this.cfg, ...partial };
+    if (this.mesh) (this.mesh.material as THREE.ShaderMaterial).wireframe = !!this.cfg.wireframe;
+  }
+
+  private build() {
+    this.uniforms = {
+      uTime: { value: 0 },
+      uScale: { value: Number(this.cfg.scale) },
+      uAmp: { value: Number(this.cfg.amplitude) },
+      uSpeed: { value: Number(this.cfg.speed) },
+      uPalette: { value: this.opts.palette().map((c) => new THREE.Color(c)) }
+    };
+
+    const geom = new THREE.PlaneGeometry(8, 8, 200, 200);
+    geom.rotateX(-Math.PI / 2);
+    const mat = new THREE.ShaderMaterial({
+      uniforms: this.uniforms,
       vertexShader: `
-        uniform float uTime, uIntensity, uSpeed;
-        varying vec2 vUv;
+        precision mediump float;
+        uniform float uTime, uScale, uAmp, uSpeed;
         varying float vH;
+        float hash(vec2 p){return fract(sin(dot(p, vec2(41.3,289.1))) * 43758.5453);}
+        float noise(vec2 p){
+          vec2 i = floor(p);
+          vec2 f = fract(p);
+          float a = hash(i);
+          float b = hash(i+vec2(1,0));
+          float c = hash(i+vec2(0,1));
+          float d = hash(i+vec2(1,1));
+          vec2 u = f*f*(3.0-2.0*f);
+          return mix(a, b, u.x) + (c-a)*u.y*(1.0-u.x) + (d-b)*u.x*u.y;
+        }
         float fbm(vec2 p){
-          float v=0.0; float a=0.5;
-          for(int i=0;i<5;i++){ v+=a*noise(p); p*=2.0; a*=0.5; }
+          float v=0.0;
+          float amp=0.5;
+          for(int i=0;i<5;i++){
+            v += noise(p)*amp;
+            p *= 2.0; amp *= 0.5;
+          }
           return v;
         }
-        // Simplex-like noise from IQ (compact placeholder)
-        float noise(vec2 p){
-          return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453);
-        }
         void main(){
-          vUv = uv;
-          vec3 pos = position;
-          float t = uTime * uSpeed;
-          float n = fbm((uv*4.0)+vec2(t*0.1, -t*0.12));
-          pos.z += (n - 0.5) * 2.0 * uIntensity;
-          vH = n;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+          vec3 p = position;
+          float h = fbm(p.xz*uScale*0.25 + vec2(0.0, uTime*uSpeed)) * uAmp;
+          p.y += h*1.5;
+          vH = h;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(p,1.0);
         }
       `,
       fragmentShader: `
-        precision highp float;
-        varying vec2 vUv;
+        precision mediump float;
         varying float vH;
         uniform vec3 uPalette[5];
         void main(){
-          vec3 a = mix(uPalette[4], uPalette[3], smoothstep(0.0,1.0,vH));
-          vec3 b = mix(uPalette[0], uPalette[1], vH);
-          vec3 c = mix(a,b,0.5);
-          gl_FragColor = vec4(c, 1.0);
+          vec3 low = mix(uPalette[4], uPalette[0], 0.5);
+          vec3 hi = mix(uPalette[1], uPalette[2], 0.5);
+          float t = clamp(vH*2.0, 0.0, 1.0);
+          vec3 col = mix(low, hi, t);
+          gl_FragColor = vec4(col, 1.0);
         }
       `,
-      wireframe: false
+      wireframe: !!this.cfg.wireframe
     });
-    this.mesh = new THREE.Mesh(geo, this.mat);
-    this.mesh.rotation.x = -Math.PI/3;
-    this.mesh.position.y = -2.0;
+
+    this.mesh = new THREE.Mesh(geom, mat);
     this.scene.add(this.mesh);
-    const light = new THREE.DirectionalLight(0xffffff, 0.2); light.position.set(3,5,2); this.scene.add(light);
   }
-  start() {}
-  stop() {
-    this.mesh.geometry.dispose(); this.mat.dispose();
+
+  setPalette(colors: string[]): void {
+    (this.mesh!.material as THREE.ShaderMaterial).uniforms.uPalette.value = colors.map((c) => new THREE.Color(c));
   }
-  update(dt: number, t: number) {
-    this.mat.uniforms.uTime.value = t;
+
+  start(): void {}
+  stop(): void {}
+
+  update(_dt: number, t: number): void {
+    (this.mesh!.material as THREE.ShaderMaterial).uniforms.uTime.value = t;
+    (this.mesh!.material as THREE.ShaderMaterial).uniforms.uScale.value = Number(this.cfg.scale);
+    (this.mesh!.material as THREE.ShaderMaterial).uniforms.uAmp.value = Number(this.cfg.amplitude);
+    (this.mesh!.material as THREE.ShaderMaterial).uniforms.uSpeed.value = Number(this.cfg.speed);
   }
-  setPalette(colors: string[]) {
-    this.palette = colors;
-    this.mat.uniforms.uPalette.value = colors.map(c => new THREE.Color(c));
-  }
-  onMacro(name: string, value: number) {
-    if (name === "intensity") this.mat.uniforms.uIntensity.value = value;
-    if (name === "speed") this.mat.uniforms.uSpeed.value = value;
-  }
-  onExplode() {
-    this.mat.uniforms.uIntensity.value = Math.min(3.0, (this.mat.uniforms.uIntensity.value as number) + 0.6);
-    setTimeout(() => this.mat.uniforms.uIntensity.value = 0.7, 600);
+
+  onMacro(name: string, value: number): void {
+    if (name === "intensity") this.cfg.amplitude = 0.4 + value * 0.9;
   }
 }

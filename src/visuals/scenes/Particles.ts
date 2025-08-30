@@ -1,102 +1,213 @@
 import * as THREE from "three";
+import type { IScene, SceneConfig, SceneConfigSchema } from "../engine";
 
-export class ParticlesScene {
-  scene = new THREE.Scene();
+type Opts = {
+  renderer: THREE.WebGLRenderer;
+  camera: THREE.PerspectiveCamera;
+  quality: () => {
+    renderScale: number;
+    particleBudget: number;
+    enablePostFX: boolean;
+    chromaticAberration: number;
+    bloom: number;
+  };
+  accessibility: () => { epilepsySafe: boolean; intensityLimiter: number; reducedMotion: boolean };
+  palette: () => string[];
+};
+
+export class ParticlesScene implements IScene {
   name = "particles";
-  private points: THREE.Points;
-  private material: THREE.ShaderMaterial;
-  private geometry: THREE.InstancedBufferGeometry | THREE.BufferGeometry;
-  private time = 0;
-  private palette = ["#59ffa9","#5aaaff","#ff59be","#ffe459","#ff8a59"];
-  private params = { intensity: 0.6, glitch: 0.1, speed: 1.0 };
+  scene = new THREE.Scene();
+  private group = new THREE.Group();
+  private points: THREE.Points | null = null;
+  private material: THREE.ShaderMaterial | null = null;
+  private geom: THREE.BufferGeometry | null = null;
+  private uniforms: Record<string, THREE.IUniform> = {};
+  private cfg: SceneConfig;
 
-  constructor(private opts: any) {
-    const count = Math.min(5_000_000, Math.max(250_000, opts.quality().particleCount));
+  constructor(private opts: Opts) {
+    this.scene.add(this.group);
+
+    this.cfg = {
+      particleCount: 600_000,
+      size: 2.0,
+      colorMode: "palette",
+      speed: 1.0,
+      curl: 0.8,
+      depthFade: true,
+      glow: 0.6
+    };
+
+    this.build();
+  }
+
+  getConfigSchema(): SceneConfigSchema {
+    return {
+      particleCount: { label: "Particle count", type: "range", min: 100000, max: 1500000, step: 50000, default: 600000, help: "Total points (higher is heavier)" },
+      size: { label: "Point size", type: "range", min: 0.5, max: 4, step: 0.1, default: 2.0 },
+      colorMode: { label: "Color mode", type: "select", options: [{value:"palette",label:"Palette"},{value:"rainbow",label:"Rainbow"},{value:"mono",label:"Monochrome"}], default: "palette" },
+      speed: { label: "Flow speed", type: "range", min: 0.2, max: 3, step: 0.05, default: 1.0 },
+      curl: { label: "Curl noise", type: "range", min: 0, max: 2, step: 0.05, default: 0.8 },
+      depthFade: { label: "Depth fade", type: "checkbox", default: true },
+      glow: { label: "Glow", type: "range", min: 0, max: 1.2, step: 0.05, default: 0.6 }
+    };
+  }
+  getConfig(): SceneConfig { return { ...this.cfg }; }
+  setConfig(partial: Partial<SceneConfig>) {
+    this.cfg = { ...this.cfg, ...partial };
+    this.rebuildIfNeeded();
+    this.updateUniforms();
+  }
+
+  private build() {
+    const count = Math.min(Number(this.cfg.particleCount) || 600_000, this.opts.quality().particleBudget);
     const positions = new Float32Array(count * 3);
+    const seeds = new Float32Array(count * 4);
+    const rng = Math.random;
     for (let i = 0; i < count; i++) {
-      const r = Math.cbrt(Math.random()) * 2.5;
-      const theta = Math.random() * Math.PI * 2;
-      const phi = Math.acos(2*Math.random()-1);
-      positions[i*3+0] = r*Math.sin(phi)*Math.cos(theta);
-      positions[i*3+1] = r*Math.sin(phi)*Math.sin(theta);
-      positions[i*3+2] = r*Math.cos(phi);
+      const r = Math.pow(rng(), 0.7) * 8.0;
+      const a = rng() * Math.PI * 2;
+      const y = (rng() - 0.5) * 4;
+      positions[i * 3 + 0] = Math.cos(a) * r;
+      positions[i * 3 + 1] = y;
+      positions[i * 3 + 2] = Math.sin(a) * r;
+      seeds[i * 4 + 0] = rng() * 1000;
+      seeds[i * 4 + 1] = rng() * 1000;
+      seeds[i * 4 + 2] = rng() * 1000;
+      seeds[i * 4 + 3] = rng();
     }
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    this.geometry = geometry;
 
+    this.geom?.dispose();
+    this.geom = new THREE.BufferGeometry();
+    this.geom.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    this.geom.setAttribute("seed", new THREE.Float32BufferAttribute(seeds, 4));
+
+    const palette = this.opts.palette().map((c) => new THREE.Color(c));
+    this.uniforms = {
+      uTime: { value: 0 },
+      uSpeed: { value: Number(this.cfg.speed) },
+      uCurl: { value: Number(this.cfg.curl) },
+      uSize: { value: Number(this.cfg.size) },
+      uGlow: { value: Number(this.cfg.glow) },
+      uColorMode: { value: this.cfg.colorMode as string },
+      uPalette: { value: palette },
+      uDepthFade: { value: !!this.cfg.depthFade },
+      uIntensity: { value: this.opts.accessibility().intensityLimiter }
+    };
+
+    this.material?.dispose();
     this.material = new THREE.ShaderMaterial({
-      transparent: true,
-      depthWrite: false,
-      uniforms: {
-        uTime: { value: 0 },
-        uIntensity: { value: this.params.intensity },
-        uGlitch: { value: this.params.glitch },
-        uSpeed: { value: this.params.speed },
-        uPalette: { value: this.palette.map(c => new THREE.Color(c)) }
-      },
+      uniforms: this.uniforms,
       vertexShader: `
+        precision mediump float;
+        attribute vec4 seed;
         uniform float uTime;
-        uniform float uGlitch;
         uniform float uSpeed;
-        attribute vec3 position;
+        uniform float uCurl;
+        uniform float uSize;
+        varying float vGlow;
         varying vec3 vPos;
-        float hash(float n){ return fract(sin(n)*43758.5453123); }
-        void main() {
-          vPos = position;
-          float t = uTime * uSpeed;
+        float s(float x){return fract(sin(x)*43758.5453123);}
+        vec3 curl(vec3 p){
+          float n1 = s(p.y+uTime*0.1)+s(p.z*1.3);
+          float n2 = s(p.z+uTime*0.1)+s(p.x*1.1);
+          float n3 = s(p.x+uTime*0.1)+s(p.y*1.7);
+          return normalize(vec3(n1,n2,n3)*2.0-1.0);
+        }
+        void main(){
           vec3 p = position;
-          // curl-like displacement
-          float n = sin(dot(p, vec3(1.3,2.1,0.7)) + t) + cos(dot(p, vec3(-0.7,1.9,1.3)) - t);
-          p += 0.15 * vec3(sin(n+t), cos(n-t*1.3), sin(n*0.7+t*0.9));
-          // occasional glitch kick
-          p += uGlitch * 0.2 * vec3(sin(t*10.0+position.x), cos(t*11.0+position.y), sin(t*9.0+position.z));
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
-          gl_PointSize = 1.0 + 2.5 * (1.0 / -gl_Position.z);
+          vec3 v = curl(p*0.15 + seed.xyz*0.02) * uCurl + normalize(vec3(-p.z*0.2, -p.y*0.05, p.x*0.2))*0.3;
+          p += v * (uSpeed*0.6);
+          vGlow = clamp(length(v)*0.8, 0.0, 1.0);
+          vPos = p;
+          vec4 mv = modelViewMatrix * vec4(p,1.0);
+          gl_PointSize = uSize * (120.0 / -mv.z);
+          gl_Position = projectionMatrix * mv;
         }
       `,
       fragmentShader: `
-        precision highp float;
-        uniform float uIntensity;
+        precision mediump float;
+        uniform float uGlow;
         uniform vec3 uPalette[5];
+        uniform bool uDepthFade;
+        uniform float uIntensity;
+        varying float vGlow;
         varying vec3 vPos;
-        void main() {
-          vec2 uv = gl_PointCoord * 2.0 - 1.0;
-          float d = dot(uv, uv);
-          if (d > 1.0) discard;
-          float a = smoothstep(1.0, 0.0, d) * uIntensity;
-          vec3 col = mix(uPalette[0], uPalette[1], clamp((vPos.x+2.5)/5.0, 0.0, 1.0));
-          col = mix(col, uPalette[2], clamp((vPos.y+2.5)/5.0, 0.0, 1.0));
-          gl_FragColor = vec4(col, a);
+
+        vec3 paletteColor(vec3 p){
+          float t = 0.5 + 0.5*sin(p.x*0.08 + p.z*0.05);
+          vec3 c = mix(uPalette[0], uPalette[1], t);
+          c = mix(c, uPalette[2], 0.35 + 0.35*sin(p.y*0.2));
+          return c;
         }
-      `
+        void main(){
+          vec2 uv = gl_PointCoord*2.0-1.0;
+          float mask = 1.0 - smoothstep(0.6,1.0,length(uv));
+          vec3 col = paletteColor(vPos);
+          col += vGlow * uGlow * 0.7;
+          if(uDepthFade){
+            float df = clamp(1.0 - (abs(vPos.z)*0.04), 0.0, 1.0);
+            col *= df*df;
+          }
+          col *= uIntensity;
+          gl_FragColor = vec4(col, mask);
+          if (gl_FragColor.a < 0.01) discard;
+        }
+      `,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending
     });
 
-    this.points = new THREE.Points(this.geometry, this.material);
-    this.scene.add(this.points);
-    this.scene.fog = new THREE.FogExp2(0x020205, 0.1);
+    this.points?.geometry.dispose();
+    (this.points as any)?.material?.dispose();
+    this.points = new THREE.Points(this.geom, this.material);
+    this.group.clear();
+    this.group.add(this.points);
+    this.updateUniforms();
   }
-  start() {}
-  stop() {
-    this.geometry.dispose();
-    this.material.dispose();
+
+  private rebuildIfNeeded() {
+    const target = Math.min(Number(this.cfg.particleCount) || 600_000, this.opts.quality().particleBudget);
+    const current = (this.geom?.getAttribute("position") as THREE.BufferAttribute | undefined)?.count || 0;
+    if (Math.abs(current - target) > 10_000) {
+      this.build();
+    }
   }
-  update(dt: number, t: number) {
-    this.time += dt;
-    this.material.uniforms.uTime.value = this.time;
+
+  private updateUniforms() {
+    if (!this.material) return;
+    this.uniforms.uSize.value = Number(this.cfg.size);
+    this.uniforms.uSpeed.value = Number(this.cfg.speed);
+    this.uniforms.uCurl.value = Number(this.cfg.curl);
+    this.uniforms.uGlow.value = Number(this.cfg.glow);
+    const pal = this.opts.palette().map((c) => new THREE.Color(c));
+    (this.uniforms.uPalette.value as any) = pal;
   }
-  setPalette(colors: string[]) {
-    this.palette = colors;
-    this.material.uniforms.uPalette.value = colors.map(c => new THREE.Color(c));
+
+  setPalette(colors: string[]): void {
+    const pal = colors.map((c) => new THREE.Color(c));
+    if (this.uniforms.uPalette) this.uniforms.uPalette.value = pal as any;
   }
-  onMacro(name: string, value: number) {
-    if (name === "intensity") this.material.uniforms.uIntensity.value = value;
-    if (name === "glitch") this.material.uniforms.uGlitch.value = value;
-    if (name === "speed") this.material.uniforms.uSpeed.value = value;
+
+  setQuality(q: any): void {
+    const max = q?.particleBudget ?? 1_000_000;
+    if (Number(this.cfg.particleCount) > max) {
+      this.cfg.particleCount = max;
+      this.rebuildIfNeeded();
+    }
   }
-  setQuality(q: any) {}
-  onExplode() {
-    this.material.uniforms.uGlitch.value = Math.min(1.0, this.material.uniforms.uGlitch.value + 0.4);
-    setTimeout(() => this.material.uniforms.uGlitch.value *= 0.5, 400);
+
+  start(): void {}
+  stop(): void {}
+
+  update(_dt: number, t: number): void {
+    if (this.uniforms.uTime) this.uniforms.uTime.value = t;
+  }
+
+  onMacro(name: string, value: number): void {
+    if (name === "intensity") {
+      this.uniforms.uGlow.value = 0.3 + 0.9 * value;
+    }
   }
 }

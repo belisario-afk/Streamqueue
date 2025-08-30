@@ -6,23 +6,29 @@ import { TerrainScene } from "./scenes/Terrain";
 import { TypographyScene } from "./scenes/Typography";
 import { BasicScene } from "./scenes/Basic";
 
+export type SceneConfigSchema = Record<
+  string,
+  {
+    label: string;
+    type: "range" | "checkbox" | "select" | "color";
+    min?: number;
+    max?: number;
+    step?: number;
+    options?: Array<{ value: string; label: string }>;
+    default: number | boolean | string;
+    help?: string;
+  }
+>;
+export type SceneConfig = Record<string, number | boolean | string>;
+
 type Quality = {
   renderScale: number;
-  msaa: number;
   taa: boolean;
-  bloom: number;
-  ssao: boolean;
-  motionBlur: boolean;
-  dof: boolean;
-  toneMap: "filmic" | "aces" | "reinhard";
-  chromaticAberration: number;
-  volumetrics: boolean;
+  particleBudget: number;
   raymarchSteps: number;
-  softShadowSamples: number;
-  particleCount: number;
-  fluidResolution: number;
-  fluidIterations: number;
-  webgpuPathTrace: boolean;
+  enablePostFX: boolean;
+  chromaticAberration: number;
+  bloom: number;
 };
 
 type Accessibility = {
@@ -35,15 +41,12 @@ type Accessibility = {
 let renderer: THREE.WebGLRenderer | undefined;
 let camera: THREE.PerspectiveCamera | undefined;
 let active: IScene;
-let pending: IScene | null = null;
 let canvasEl: HTMLCanvasElement | undefined;
 let quality: Quality;
 let accessibility: Accessibility;
 let currentPalette: string[] = ["#59ffa9", "#5aaaff", "#ff59be", "#ffe459", "#ff8a59"];
 let frameGovTarget = 60;
 let clock = new THREE.Clock();
-let safeMode = false;
-let renderErrorCount = 0;
 
 const scenes: Record<string, new (opts: SceneOptions) => IScene> = {
   basic: BasicScene as any,
@@ -69,9 +72,12 @@ export interface IScene {
   stop(): void;
   update(dt: number, t: number): void;
   setPalette(colors: string[]): void;
-  onMacro?(name: string, value: number): void;
-  onExplode?(): void;
   setQuality?(q: Quality): void;
+  onMacro?(name: string, value: number): void;
+
+  getConfigSchema?(): SceneConfigSchema;
+  getConfig?(): SceneConfig;
+  setConfig?(cfg: Partial<SceneConfig>): void;
 }
 
 export async function initEngine(canvas: HTMLCanvasElement) {
@@ -80,42 +86,35 @@ export async function initEngine(canvas: HTMLCanvasElement) {
     canvas,
     antialias: false,
     powerPreference: "high-performance",
-    alpha: false
+    alpha: false,
+    depth: true,
+    stencil: false
   });
 
-  // Modern color configuration
   (renderer as any).outputColorSpace = (THREE as any).SRGBColorSpace ?? (renderer as any).outputColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.0;
 
   renderer.debug.checkShaderErrors = true;
   renderer.autoClear = true;
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.6));
+
   const cw = canvas.clientWidth || window.innerWidth || 1280;
   const ch = canvas.clientHeight || window.innerHeight || 720;
   renderer.setSize(cw, ch, false);
-  renderer.setClearColor(0x040406, 1);
+  renderer.setClearColor(0x06070a, 1);
 
-  camera = new THREE.PerspectiveCamera(60, cw / ch, 0.1, 2000);
+  camera = new THREE.PerspectiveCamera(60, cw / ch, 0.1, 4000);
   camera.position.set(0, 0, 5);
 
   quality = {
     renderScale: 1.0,
-    msaa: 0,
     taa: false,
-    bloom: 0.0,
-    ssao: false,
-    motionBlur: false,
-    dof: false,
-    toneMap: "filmic",
-    chromaticAberration: 0.0,
-    volumetrics: false,
-    raymarchSteps: 384,
-    softShadowSamples: 8,
-    particleCount: 500_000,
-    fluidResolution: 384,
-    fluidIterations: 20,
-    webgpuPathTrace: false
+    particleBudget: 1_000_000,
+    raymarchSteps: 512,
+    enablePostFX: true,
+    chromaticAberration: 0.08,
+    bloom: 0.7
   };
   accessibility = {
     epilepsySafe: false,
@@ -124,38 +123,25 @@ export async function initEngine(canvas: HTMLCanvasElement) {
     highContrast: false
   };
 
-  // Start with safest scene
-  active = new BasicScene() as unknown as IScene;
-  (active as any).start?.();
+  active = new ParticlesScene({
+    renderer,
+    camera,
+    quality: () => quality,
+    accessibility: () => accessibility,
+    palette: () => currentPalette
+  });
+  active.start();
 
   window.addEventListener("vj-macro", (e: any) => {
     active.onMacro?.(e.detail.name, e.detail.value);
   });
-  window.addEventListener("vj-explode", () => {
-    active.onExplode?.();
-  });
-  window.addEventListener("vj-scene", (e: any) => {
-    setScene(e.detail.scene);
-  });
 }
 
-export function isWebGL2Capable(): boolean {
+export function isWebGL2(): boolean {
   try {
     return !!renderer?.capabilities?.isWebGL2;
   } catch {
     return false;
-  }
-}
-
-function allowedScenesList(): Array<keyof typeof scenes> {
-  // Conservative by default
-  return ["basic", "particles", "type"];
-}
-
-export function setSafeMode(on: boolean) {
-  safeMode = on;
-  if (safeMode) {
-    setScene("basic");
   }
 }
 
@@ -167,7 +153,7 @@ export function resizeEngine(w: number, h: number, dpr: number) {
   if (!renderer || !camera || !canvasEl) return;
   const width = Math.max(1, w || canvasEl.clientWidth || window.innerWidth || 1);
   const height = Math.max(1, h || canvasEl.clientHeight || window.innerHeight || 1);
-  const scale = Math.max(1, Math.min(dpr || window.devicePixelRatio || 1, 1.5)) * (quality?.renderScale || 1);
+  const scale = Math.max(1, Math.min(dpr || window.devicePixelRatio || 1, 1.6)) * (quality?.renderScale || 1);
   renderer.setPixelRatio(scale);
   renderer.setSize(width, height, false);
   camera.aspect = width / height;
@@ -176,14 +162,16 @@ export function resizeEngine(w: number, h: number, dpr: number) {
 
 export function setQuality(q: Partial<Quality>) {
   quality = { ...quality, ...q };
-  if (!renderer || !canvasEl) return;
-  resizeEngine(canvasEl.clientWidth, canvasEl.clientHeight, window.devicePixelRatio);
   active.setQuality?.(quality);
-  pending?.setQuality?.(quality);
 }
 
 export function setAccessibility(a: Partial<Accessibility>) {
   accessibility = { ...accessibility, ...a };
+}
+
+export function updatePalette(colors: string[]) {
+  currentPalette = colors.slice(0, 5);
+  active.setPalette(colors);
 }
 
 export function setMacros(m: { intensity?: number; bloom?: number; glitch?: number; speed?: number }) {
@@ -194,37 +182,46 @@ export function setMacros(m: { intensity?: number; bloom?: number; glitch?: numb
 }
 
 export function setScene(name: keyof typeof scenes) {
-  const allowed = new Set(allowedScenesList());
-  const pick = allowed.has(name) ? name : "basic";
-  const ctor = scenes[pick];
-  if (!ctor || !renderer || !camera) return;
-  try { active.stop?.(); } catch {}
+  const ctor = scenes[name] || ParticlesScene;
+  if (!renderer || !camera) return;
+  try {
+    active.stop();
+  } catch {}
   active = new ctor({
     renderer,
     camera,
     quality: () => quality,
     accessibility: () => accessibility,
     palette: () => currentPalette
-  } as any);
+  });
   active.setPalette(currentPalette);
   active.start();
+  window.dispatchEvent(new CustomEvent("vj-scene-changed", { detail: { name } }));
 }
 
-// NEW: provide a safe crossfade stub for callers (e.g., director.ts)
-export function crossfadeToScene(name: keyof typeof scenes, seconds = 0) {
-  // For stability across GPUs, just switch scenes without blending.
+export function crossfadeToScene(name: keyof typeof scenes, _seconds = 0) {
   setScene(name);
 }
 
-export function updatePalette(colors: string[]) {
-  currentPalette = colors;
-  active.setPalette(colors);
-  pending?.setPalette(colors);
+export function getActiveSceneName(): string {
+  return (active && (active as any).name) || "unknown";
+}
+
+export function getSceneConfigSchema(): SceneConfigSchema | null {
+  return active.getConfigSchema?.() || null;
+}
+
+export function getSceneConfig(): SceneConfig | null {
+  return active.getConfig?.() || null;
+}
+
+export function setSceneConfig(partial: Partial<SceneConfig>) {
+  active.setConfig?.(partial);
 }
 
 export function autoPickScene() {
-  const order = allowedScenesList();
-  const idx = Math.floor((Date.now() / 10000) % order.length);
+  const order: (keyof typeof scenes)[] = ["particles", "terrain", "tunnel", "fluid", "type"];
+  const idx = Math.floor((Date.now() / 12000) % order.length);
   setScene(order[idx]);
 }
 
@@ -233,23 +230,14 @@ export function startRender() {
     const dt = clock.getDelta();
     const t = performance.now() / 1000;
 
-    if (1 / Math.max(dt, 1e-5) < frameGovTarget - 5) {
-      active.onMacro?.("speed", 0.9);
-    } else {
-      active.onMacro?.("speed", 1.0);
-    }
-
+    active.onMacro?.("speed", 1.0);
     try {
       active.update(dt, t);
       if (renderer && camera) {
         renderer.render((active as any).scene, camera);
       }
-      renderErrorCount = 0;
     } catch {
-      renderErrorCount++;
-      if (renderErrorCount > 2 && !safeMode) {
-        setSafeMode(true);
-      }
+      setScene("basic");
     }
     requestAnimationFrame(loop);
   };
