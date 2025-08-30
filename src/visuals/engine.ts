@@ -82,11 +82,9 @@ export async function initEngine(canvas: HTMLCanvasElement) {
     powerPreference: "high-performance",
     alpha: false
   });
-  // Color/tone defaults
-  (renderer as any).outputColorSpace = (THREE as any).SRGBColorSpace || (renderer as any).outputEncoding;
-  if ((renderer as any).outputEncoding !== undefined) {
-    (renderer as any).outputEncoding = (THREE as any).sRGBEncoding ?? (renderer as any).outputEncoding;
-  }
+
+  // Modern color configuration
+  (renderer as any).outputColorSpace = (THREE as any).SRGBColorSpace ?? (renderer as any).outputColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.0;
 
@@ -126,16 +124,9 @@ export async function initEngine(canvas: HTMLCanvasElement) {
     highContrast: false
   };
 
-  // Choose initial scene based on capability
-  const initial = isWebGL2Capable() ? "particles" : "basic";
-  active = new (scenes[initial])({
-    renderer,
-    camera,
-    quality: () => quality,
-    accessibility: () => accessibility,
-    palette: () => currentPalette
-  });
-  active.start();
+  // Start with safest scene
+  active = new BasicScene() as unknown as IScene;
+  (active as any).start?.();
 
   window.addEventListener("vj-macro", (e: any) => {
     active.onMacro?.(e.detail.name, e.detail.value);
@@ -144,24 +135,21 @@ export async function initEngine(canvas: HTMLCanvasElement) {
     active.onExplode?.();
   });
   window.addEventListener("vj-scene", (e: any) => {
-    crossfadeToScene(e.detail.scene, 1.2);
+    setScene(e.detail.scene);
   });
 }
 
 export function isWebGL2Capable(): boolean {
   try {
-    const gl2 = (renderer as any)?.getContext?.("webgl2");
-    return !!gl2;
+    return !!renderer?.capabilities?.isWebGL2;
   } catch {
     return false;
   }
 }
 
 function allowedScenesList(): Array<keyof typeof scenes> {
-  if (safeMode || !isWebGL2Capable()) {
-    return ["basic", "particles", "type"];
-  }
-  return ["particles", "fluid", "tunnel", "terrain", "type", "basic"];
+  // Conservative by default
+  return ["basic", "particles", "type"];
 }
 
 export function setSafeMode(on: boolean) {
@@ -210,75 +198,22 @@ export function setScene(name: keyof typeof scenes) {
   const pick = allowed.has(name) ? name : "basic";
   const ctor = scenes[pick];
   if (!ctor || !renderer || !camera) return;
-  try { active.stop(); } catch {}
+  try { active.stop?.(); } catch {}
   active = new ctor({
     renderer,
     camera,
     quality: () => quality,
     accessibility: () => accessibility,
     palette: () => currentPalette
-  });
+  } as any);
   active.setPalette(currentPalette);
   active.start();
 }
 
-export function crossfadeToScene(name: keyof typeof scenes, seconds = 1.0) {
-  if (safeMode || !isWebGL2Capable()) {
-    // Avoid GL blending paths that can fail on some GPUs
-    setScene(name);
-    return;
-  }
-  const allowed = new Set(allowedScenesList());
-  const pick = allowed.has(name) ? name : "basic";
-  const ctor = scenes[pick];
-  if (!ctor || !renderer || !camera) return;
-  if (pending) { try { pending.stop(); } catch {} pending = null; }
-
-  pending = new ctor({
-    renderer,
-    camera,
-    quality: () => quality,
-    accessibility: () => accessibility,
-    palette: () => currentPalette
-  });
-  pending.setPalette(currentPalette);
-  pending.start();
-
-  const startT = performance.now();
-  const fade = () => {
-    if (!renderer || !camera || !pending) return;
-    const t = (performance.now() - startT) / 1000;
-    const k = Math.min(1, seconds > 0 ? t / seconds : 1);
-
-    // Simple two-pass composite using renderer state blending
-    const gl: any = (renderer as any).getContext?.() || null;
-    const state: any = (renderer as any).state;
-
-    try {
-      // Render A
-      renderer.setClearAlpha(1);
-      renderer.clear();
-      state.setBlending(THREE.NoBlending);
-      renderer.render((active as any).scene, camera);
-
-      // Render B on top with alpha
-      state.setBlending(THREE.NormalBlending, THREE.SrcAlphaFactor, THREE.OneMinusSrcAlphaFactor);
-      // simulate alpha via material opacity override if present (best-effort)
-      renderer.render((pending as any).scene, camera);
-      state.setBlending(THREE.NoBlending);
-    } catch {
-      setScene(pick);
-      return;
-    }
-
-    if (k < 1) requestAnimationFrame(fade);
-    else {
-      try { active.stop(); } catch {}
-      active = pending!;
-      pending = null;
-    }
-  };
-  fade();
+// NEW: provide a safe crossfade stub for callers (e.g., director.ts)
+export function crossfadeToScene(name: keyof typeof scenes, seconds = 0) {
+  // For stability across GPUs, just switch scenes without blending.
+  setScene(name);
 }
 
 export function updatePalette(colors: string[]) {
@@ -312,7 +247,7 @@ export function startRender() {
       renderErrorCount = 0;
     } catch {
       renderErrorCount++;
-      if (renderErrorCount > 3 && !safeMode) {
+      if (renderErrorCount > 2 && !safeMode) {
         setSafeMode(true);
       }
     }
