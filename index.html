@@ -2,136 +2,33 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover"
-    />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
     <title>dwdw • Spotify Visual VJ</title>
     <meta name="theme-color" content="#0b0b0b" />
     <meta name="description" content="Audio-reactive VJ for Spotify with PKCE." />
     <link rel="icon" href="%BASE_URL%icon.svg" />
     <style>
-      :root {
-        --bg: #0b0b0b;
-        --fg: #f0f0f0;
-        --muted: #9aa0a6;
-        --accent: #59ffa9;
-        --accent-2: #5aaaff;
-        --accent-3: #ff59be;
-        --danger: #ff4d4f;
-        --hi: #fff;
-        --lo: #000;
-        --palette-0: #59ffa9;
-        --palette-1: #5aaaff;
-        --palette-2: #ff59be;
-        --palette-3: #ffe459;
-        --palette-4: #ff8a59;
-      }
-      html, body, #app {
-        height: 100%;
-        margin: 0;
-        background: var(--bg);
-        color: var(--fg);
-        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji";
-      }
-      #root {
-        position: fixed;
-        inset: 0;
-        overflow: hidden;
-      }
-      canvas#vis {
-        position: absolute;
-        inset: 0;
-        width: 100%;
-        height: 100%;
-        display: block;
-        background: radial-gradient(ellipse at 50% 50%, #0f0f13, #060608 60%, #020203);
-      }
-      .ui {
-        position: absolute;
-        inset: 0;
-        pointer-events: none;
-      }
-      .toolbar, .panels {
-        pointer-events: auto;
-      }
-      .toolbar {
-        position: absolute;
-        left: 0; right: 0; bottom: 0;
-        display: flex;
-        gap: 8px;
-        padding: 10px 12px;
-        align-items: center;
-        background: linear-gradient(to top, rgba(0,0,0,0.65), rgba(0,0,0,0));
-      }
-      .btn, select, input[type="range"], input[type="checkbox"], .chip {
-        font: inherit;
-        color: var(--fg);
-        background: rgba(255,255,255,0.06);
-        border: 1px solid rgba(255,255,255,0.12);
-        border-radius: 8px;
-        padding: 8px 10px;
-        transition: background .2s ease, border-color .2s ease;
-      }
-      .btn:hover { background: rgba(255,255,255,0.12); }
+      :root { --bg: #0b0b0b; --fg: #f0f0f0; --muted: #9aa0a6; --accent: #59ffa9; --accent-2: #5aaaff; --accent-3: #ff59be; --palette-0:#59ffa9; --palette-1:#5aaaff; --palette-2:#ff59be; --palette-3:#ffe459; --palette-4:#ff8a59; }
+      html, body, #app { height: 100%; margin: 0; background: var(--bg); color: var(--fg); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans"; }
+      #root { position: fixed; inset: 0; overflow: hidden; }
+      canvas#vis { position: absolute; inset: 0; width: 100%; height: 100%; display: block; background: radial-gradient(ellipse at 50% 50%, #0f0f13, #060608 60%, #020203); }
+      .ui { position: absolute; inset: 0; pointer-events: none; }
+      .toolbar, .panels { pointer-events: auto; }
+      .toolbar { position: absolute; left: 0; right: 0; bottom: 0; display: flex; gap: 8px; padding: 10px 12px; align-items: center; background: linear-gradient(to top, rgba(0,0,0,0.65), rgba(0,0,0,0)); }
+      .btn, select, input[type="range"], input[type="checkbox"], .chip { font: inherit; color: var(--fg); background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; padding: 8px 10px; }
       .btn.primary { background: var(--accent); color: #000; border: none; }
-      .spacer { flex: 1; }
-      .panel {
-        position: absolute;
-        top: 12px;
-        right: 12px;
-        width: 340px;
-        max-width: calc(100% - 24px);
-        max-height: 70vh;
-        overflow: auto;
-        background: rgba(0,0,0,0.5);
-        border: 1px solid rgba(255,255,255,0.1);
-        border-radius: 12px;
-        padding: 12px;
-        backdrop-filter: blur(10px);
-      }
-      .panel h3 { margin: 8px 0 8px; font-weight: 600; }
+      .panel { position: absolute; top: 12px; right: 12px; width: 340px; max-width: calc(100% - 24px); max-height: 70vh; overflow: auto; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 12px; backdrop-filter: blur(10px); }
       .row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
       .row label { flex: 1; color: var(--muted); }
-      .meter {
-        position: absolute; top: 12px; left: 12px;
-        display: flex; gap: 6px; align-items: center;
-        background: rgba(0,0,0,0.5);
-        border: 1px solid rgba(255,255,255,0.1);
-        border-radius: 10px;
-        padding: 6px 10px;
-      }
+      .meter { position: absolute; top: 12px; left: 12px; display: flex; gap: 6px; align-items: center; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; padding: 6px 10px; }
       .meter .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
       .tag { font-size: 12px; color: var(--muted); }
-      .scene-chip { cursor: pointer; }
-      .hidden { display: none !important; }
-      .device-picker { min-width: 180px; }
-      .kbd { background: rgba(255,255,255,0.08); border-radius: 6px; padding: 2px 6px; border: 1px solid rgba(255,255,255,0.15); }
-      .cover {
-        position: absolute; top: 12px; left: 12px;
-        width: 84px; height: 84px; border-radius: 10px; overflow: hidden;
-        border: 1px solid rgba(255,255,255,0.12);
-      }
-      .cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
-      .title {
-        position: absolute; top: 12px; left: 108px; right: 12px;
-        display: flex; flex-direction: column; gap: 4px;
-        text-shadow: 0 1px 0 rgba(0,0,0,0.8);
-      }
-      .title .track { font-size: clamp(20px, 3.5vw, 40px); font-weight: 700; letter-spacing: 0.2px; }
-      .title .artist { color: var(--muted); }
-      .screensaver {
-        position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
-        background: radial-gradient(ellipse at 50% 50%, rgba(0,0,0,0.35), rgba(0,0,0,0.8));
-        color: var(--muted);
-        font-size: 20px; letter-spacing: 0.5px;
-      }
+      .cover { position: absolute; top: 12px; left: 12px; width: 84px; height: 84px; border-radius: 10px; overflow: hidden; border: 1px solid rgba(255,255,255,0.12); }
+      .title { position: absolute; top: 12px; left: 108px; right: 12px; display: flex; flex-direction: column; gap: 4px; text-shadow: 0 1px 0 rgba(0,0,0,0.8); }
+      .screensaver { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; background: radial-gradient(ellipse at 50% 50%, rgba(0,0,0,0.35), rgba(0,0,0,0.8)); color: var(--muted); font-size: 20px; }
       .screensaver.active { display: flex; }
     </style>
-    <script>
-      // Spotify Web Playback SDK
-      window.onSpotifyWebPlaybackSDKReady = () => {};
-    </script>
+    <script>window.onSpotifyWebPlaybackSDKReady = () => {};</script>
     <script defer src="https://sdk.scdn.co/spotify-player.js"></script>
   </head>
   <body>
@@ -152,12 +49,12 @@
         </div>
 
         <div class="panel panels" id="panel-quality">
-          <h3>Expensive Quality Panel</h3>
+          <h3>Quality</h3>
           <div class="row"><label>Render scale</label><input id="q-scale" type="range" min="1" max="2" step="0.1" value="1"><span id="q-scale-v">1.0x</span></div>
           <div class="row"><label>MSAA</label><input id="q-msaa" type="range" min="0" max="16" step="2" value="0"><span id="q-msaa-v">0</span></div>
           <div class="row"><label>TAA</label><input id="q-taa" type="checkbox"></div>
-          <div class="row"><label>Bloom</label><input id="q-bloom" type="range" min="0" max="3" step="0.05" value="0.8"><span id="q-bloom-v">0.8</span></div>
-          <div class="row"><label>SSAO</label><input id="q-ssao" type="checkbox" checked></div>
+          <div class="row"><label>Bloom</label><input id="q-bloom" type="range" min="0" max="3" step="0.05" value="0"><span id="q-bloom-v">0.0</span></div>
+          <div class="row"><label>SSAO</label><input id="q-ssao" type="checkbox"></div>
           <div class="row"><label>Motion blur</label><input id="q-moblur" type="checkbox"></div>
           <div class="row"><label>DOF</label><input id="q-dof" type="checkbox"></div>
           <div class="row"><label>Tone map</label>
@@ -167,21 +64,22 @@
               <option value="reinhard">Reinhard</option>
             </select>
           </div>
-          <div class="row"><label>Chromatic aberration</label><input id="q-chroma" type="range" min="0" max="1.5" step="0.01" value="0.12"><span id="q-chroma-v">0.12</span></div>
-          <div class="row"><label>Volumetrics</label><input id="q-vol" type="checkbox" checked></div>
-          <div class="row"><label>Raymarch steps</label><input id="q-steps" type="range" min="256" max="1024" step="32" value="512"><span id="q-steps-v">512</span></div>
-          <div class="row"><label>Soft shadow samples</label><input id="q-soft" type="range" min="4" max="64" step="2" value="16"><span id="q-soft-v">16</span></div>
-          <div class="row"><label>Particle count</label><input id="q-particles" type="range" min="250000" max="5000000" step="250000" value="1000000"><span id="q-particles-v">1.0M</span></div>
-          <div class="row"><label>Fluid resolution</label><input id="q-fluid-res" type="range" min="256" max="1024" step="128" value="512"><span id="q-fluid-res-v">512²</span></div>
-          <div class="row"><label>Fluid iterations</label><input id="q-fluid-iters" type="range" min="10" max="80" step="5" value="30"><span id="q-fluid-iters-v">30</span></div>
+          <div class="row"><label>Chromatic aberration</label><input id="q-chroma" type="range" min="0" max="1.5" step="0.01" value="0"><span id="q-chroma-v">0</span></div>
+          <div class="row"><label>Volumetrics</label><input id="q-vol" type="checkbox"></div>
+          <div class="row"><label>Raymarch steps</label><input id="q-steps" type="range" min="256" max="1024" step="32" value="384"><span id="q-steps-v">384</span></div>
+          <div class="row"><label>Soft shadow samples</label><input id="q-soft" type="range" min="4" max="64" step="2" value="8"><span id="q-soft-v">8</span></div>
+          <div class="row"><label>Particle count</label><input id="q-particles" type="range" min="250000" max="5000000" step="250000" value="500000"><span id="q-particles-v">0.5M</span></div>
+          <div class="row"><label>Fluid resolution</label><input id="q-fluid-res" type="range" min="256" max="1024" step="128" value="384"><span id="q-fluid-res-v">384²</span></div>
+          <div class="row"><label>Fluid iterations</label><input id="q-fluid-iters" type="range" min="10" max="80" step="5" value="20"><span id="q-fluid-iters-v">20</span></div>
           <div class="row"><label>WebGPU path trace (demo)</label><input id="q-webgpu" type="checkbox"></div>
         </div>
 
         <div class="panel panels" id="panel-vj" style="top: 12px; right: 370px;">
-          <h3>VJ Panel</h3>
+          <h3>VJ</h3>
           <div class="row"><label>Scene</label>
             <select id="scene-picker">
-              <option value="auto">Auto (by audio features)</option>
+              <option value="auto">Auto</option>
+              <option value="basic">Basic (safe)</option>
               <option value="particles">Particles</option>
               <option value="fluid">Fluid</option>
               <option value="tunnel">Tunnel</option>
@@ -190,37 +88,11 @@
             </select>
           </div>
           <div class="row"><label>Macro Intensity</label><input id="vj-intensity" type="range" min="0" max="1" step="0.01" value="0.6"><span id="vj-intensity-v">0.60</span></div>
-          <div class="row"><label>Bloom</label><input id="vj-bloom" type="range" min="0" max="3" step="0.05" value="0.8"><span id="vj-bloom-v">0.80</span></div>
+          <div class="row"><label>Bloom</label><input id="vj-bloom" type="range" min="0" max="3" step="0.05" value="0.0"><span id="vj-bloom-v">0.00</span></div>
           <div class="row"><label>Glitch</label><input id="vj-glitch" type="range" min="0" max="1" step="0.01" value="0.1"><span id="vj-glitch-v">0.10</span></div>
           <div class="row"><label>Speed</label><input id="vj-speed" type="range" min="0.1" max="3" step="0.05" value="1"><span id="vj-speed-v">1.00</span></div>
           <div class="row"><label>MIDI status</label><span id="midi-status" class="chip">not connected</span></div>
           <div class="row"><label>Record WebM</label><button id="record-toggle" class="btn">Start</button><span id="record-status" class="tag">idle</span></div>
-        </div>
-
-        <div class="panel panels hidden" id="panel-director" style="top: 300px; right: 370px;">
-          <h3>Director Timeline</h3>
-          <div class="row">
-            <label>Crossfade at phrase boundaries</label>
-            <input id="dir-auto-crossfade" type="checkbox" checked>
-          </div>
-          <div class="row">
-            <label>Add cue at bar</label>
-            <input id="dir-bar-num" type="number" min="1" value="33" style="width: 80px;">
-            <select id="dir-cue-type">
-              <option value="explode">explode</option>
-              <option value="scene:particles">scene:particles</option>
-              <option value="scene:fluid">scene:fluid</option>
-              <option value="scene:tunnel">scene:tunnel</option>
-              <option value="scene:terrain">scene:terrain</option>
-              <option value="scene:type">scene:type</option>
-              <option value="flash">flash</option>
-            </select>
-            <button id="dir-add" class="btn">Add</button>
-          </div>
-          <div id="dir-list" class="tag">No cues</div>
-          <div class="row">
-            <button id="dir-clear" class="btn">Clear</button>
-          </div>
         </div>
 
         <div class="panel panels" id="panel-access" style="top: 12px; left: 12px; width: 310px;">
@@ -229,6 +101,7 @@
           <div class="row"><label>Intensity limiter</label><input id="acc-intensity" type="range" min="0.2" max="1" step="0.05" value="1"><span id="acc-intensity-v">1.00</span></div>
           <div class="row"><label>Reduced motion</label><input id="acc-reduced" type="checkbox"></div>
           <div class="row"><label>High contrast</label><input id="acc-contrast" type="checkbox"></div>
+          <div class="row"><label>Safe mode (fallback renderer)</label><input id="acc-safe" type="checkbox"></div>
         </div>
 
         <div class="toolbar">

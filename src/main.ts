@@ -1,35 +1,8 @@
 import { ensureAuth, getAccessToken, initAuthUI, isPremium } from "@auth/auth";
 import { initAPI } from "@spotify/api";
-import {
-  initWebPlayback,
-  connectWebPlayback,
-  getDevices,
-  transferPlayback,
-  playPause,
-  nextTrack,
-  prevTrack,
-  seekMs,
-  setVolume,
-  currentState,
-  setDeviceVolume
-} from "@spotify/playback";
-import {
-  initEngine,
-  resizeEngine,
-  setQuality,
-  setMacros,
-  setScene,
-  autoPickScene,
-  updatePalette,
-  setAccessibility,
-  startRender,
-  setFrameGovernorTarget,
-  crossfadeToScene,
-  getEngineCanvas,
-  isWebGL2Capable
-} from "@visuals/engine";
+import { initWebPlayback, connectWebPlayback, getDevices, transferPlayback, playPause, nextTrack, prevTrack, seekMs, setVolume, currentState, setDeviceVolume } from "@spotify/playback";
+import { initEngine, resizeEngine, setQuality, setMacros, setScene, autoPickScene, updatePalette, setAccessibility, startRender, setFrameGovernorTarget, crossfadeToScene, getEngineCanvas, isWebGL2Capable, setSafeMode } from "@visuals/engine";
 import { initDirector } from "@controllers/director";
-import { initVJ } from "@controllers/vj";
 import { savePaletteForTrack, getCachedCover, cacheTrackMeta } from "@utils/indexeddb";
 import { extractPalette } from "@utils/palette";
 import { fpsMeter, gpuLabel } from "@utils/fps";
@@ -37,26 +10,15 @@ import { formatTime } from "@utils/time";
 import { initRecorder, toggleRecording } from "@recording/recorder";
 
 const CLIENT_ID = "927fda6918514f96903e828fcd6bb576";
-
 const REPO_BASE = (() => {
   const parts = location.pathname.split("/").filter(Boolean);
   return parts.length ? `/${parts[0]}/` : "/";
 })();
+const REDIRECT_URI = (location.hostname === "127.0.0.1" || location.hostname === "localhost")
+  ? "http://127.0.0.1:5173/"
+  : `${location.origin}${REPO_BASE}`;
 
-// Use app root as redirect (register both URLs in Spotify Dashboard)
-const REDIRECT_URI =
-  location.hostname === "127.0.0.1" || location.hostname === "localhost"
-    ? "http://127.0.0.1:5173/"
-    : `${location.origin}${REPO_BASE}`;
-
-const scopes = [
-  "user-read-private",
-  "user-read-email",
-  "user-read-playback-state",
-  "user-modify-playback-state",
-  "user-read-currently-playing",
-  "streaming"
-];
+const scopes = ["user-read-private","user-read-email","user-read-playback-state","user-modify-playback-state","user-read-currently-playing","streaming"];
 
 const elements = {
   loginBtn: document.getElementById("login-btn") as HTMLButtonElement,
@@ -69,7 +31,7 @@ const elements = {
   devicePicker: document.getElementById("device-picker") as HTMLSelectElement,
   modeLabel: document.getElementById("mode-label") as HTMLSpanElement,
   fpsLabel: document.getElementById("fps-label") as HTMLSpanElement,
-  gpuLabel: document.getElementById("gpu-label") as HTMLSpanElement,
+  gpuLabelEl: document.getElementById("gpu-label") as HTMLSpanElement,
   beatDot: document.getElementById("beat-dot") as HTMLDivElement,
   scenePicker: document.getElementById("scene-picker") as HTMLSelectElement,
   vjIntensity: document.getElementById("vj-intensity") as HTMLInputElement,
@@ -111,6 +73,7 @@ const elements = {
   accIntensityV: document.getElementById("acc-intensity-v") as HTMLSpanElement,
   accReduced: document.getElementById("acc-reduced") as HTMLInputElement,
   accContrast: document.getElementById("acc-contrast") as HTMLInputElement,
+  accSafe: document.getElementById("acc-safe") as HTMLInputElement,
   fullscreen: document.getElementById("fullscreen-btn") as HTMLButtonElement,
   recordToggle: document.getElementById("record-toggle") as HTMLButtonElement,
   recordStatus: document.getElementById("record-status") as HTMLSpanElement,
@@ -140,7 +103,7 @@ function updateModeLabel() {
 async function refreshDevices() {
   const devices = await getDevices();
   elements.devicePicker.innerHTML = "";
-  devices.forEach((d) => {
+  devices.forEach(d => {
     const opt = document.createElement("option");
     opt.value = d.id || "";
     opt.textContent = `${d.name} ${d.is_active ? "•" : ""}`;
@@ -165,7 +128,7 @@ function hookQualityPanel() {
       dof: q.qDOF.checked,
       toneMap: q.qToneMap.value as any,
       chromaticAberration: parseFloat(q.qChroma.value),
-      volumetrics: (q.qVol as any)?.checked ?? true,
+      volumetrics: (q.qVol as any)?.checked ?? false,
       raymarchSteps: parseInt(q.qSteps.value),
       softShadowSamples: parseInt(q.qSoft.value),
       particleCount: parseInt(q.qParticles.value),
@@ -179,50 +142,33 @@ function hookQualityPanel() {
     q.qChromaV.textContent = q.qChroma.value;
     q.qStepsV.textContent = q.qSteps.value;
     q.qSoftV.textContent = q.qSoft.value;
-    q.qParticlesV.textContent = `${(parseInt(q.qParticles.value) / 1e6).toFixed(1)}M`;
+    q.qParticlesV.textContent = `${(parseInt(q.qParticles.value)/1e6).toFixed(1)}M`;
     q.qFluidResV.textContent = `${q.qFluidRes.value}²`;
     q.qFluidItersV.textContent = q.qFluidIters.value;
   };
-  ["input", "change"].forEach((evt) => {
-    [
-      q.qScale,
-      q.qMSAA,
-      q.qTAA,
-      q.qBloom,
-      q.qSSAO,
-      q.qMoBlur,
-      q.qDOF,
-      q.qToneMap,
-      q.qChroma,
-      q.qVol,
-      q.qSteps,
-      q.qSoft,
-      q.qParticles,
-      q.qFluidRes,
-      q.qFluidIters,
-      q.qWebGPU
-    ].forEach((el) => {
-      el?.addEventListener(evt, apply);
-    });
+  ["input","change"].forEach(evt => {
+    [q.qScale,q.qMSAA,q.qTAA,q.qBloom,q.qSSAO,q.qMoBlur,q.qDOF,q.qToneMap,q.qChroma,q.qVol,q.qSteps,q.qSoft,q.qParticles,q.qFluidRes,q.qFluidIters,q.qWebGPU].forEach(el => el?.addEventListener(evt, apply));
   });
 }
 
 function hookAccessibility() {
   const apply = () => {
     const cfg = {
-      epilepsySafe: elements.accEpilepsy.checked,
-      intensityLimiter: parseFloat(elements.accIntensity.value),
-      reducedMotion: elements.accReduced.checked,
-      highContrast: elements.accContrast.checked
+      epilepsySafe: elements.accEpilepsy?.checked ?? false,
+      intensityLimiter: parseFloat(elements.accIntensity?.value || "1"),
+      reducedMotion: elements.accReduced?.checked ?? false,
+      highContrast: elements.accContrast?.checked ?? false
     };
-    elements.accIntensityV.textContent = parseFloat(elements.accIntensity.value).toFixed(2);
+    elements.accIntensityV.textContent = cfg.intensityLimiter.toFixed(2);
     setAccessibility(cfg);
+    setSafeMode(!!elements.accSafe?.checked);
+    if (elements.accSafe?.checked) {
+      setScene("basic" as any);
+    }
     document.body.style.filter = cfg.highContrast ? "contrast(1.15) saturate(1.15)" : "";
   };
-  ["input", "change"].forEach((evt) => {
-    [elements.accEpilepsy, elements.accIntensity, elements.accReduced, elements.accContrast].forEach((el) =>
-      el.addEventListener(evt, apply)
-    );
+  ["input","change"].forEach(evt => {
+    [elements.accEpilepsy,elements.accIntensity,elements.accReduced,elements.accContrast,elements.accSafe].forEach(el => el?.addEventListener(evt, apply));
   });
   apply();
 }
@@ -240,44 +186,29 @@ function hookVJ() {
     elements.vjGlitchV.textContent = parseFloat(elements.vjGlitch.value).toFixed(2);
     elements.vjSpeedV.textContent = parseFloat(elements.vjSpeed.value).toFixed(2);
   };
-  ["input", "change"].forEach((evt) => {
-    [elements.vjIntensity, elements.vjBloom, elements.vjGlitch, elements.vjSpeed].forEach((el) => el.addEventListener(evt, apply));
+  ["input","change"].forEach(evt => {
+    [elements.vjIntensity, elements.vjBloom, elements.vjGlitch, elements.vjSpeed].forEach(el => el.addEventListener(evt, apply));
   });
   apply();
 
   elements.scenePicker.addEventListener("change", () => {
-    const v = elements.scenePicker.value;
-    if (v === "auto") autoPickScene();
-    else setScene(v as any);
+    const v = elements.scenePicker.value as any;
+    setScene(v === "auto" ? "basic" : v);
   });
 }
 
 function hookControls() {
-  elements.playpauseBtn.addEventListener("click", async () => {
-    await playPause();
-  });
-  elements.prevBtn.addEventListener("click", async () => {
-    await prevTrack();
-  });
-  elements.nextBtn.addEventListener("click", async () => {
-    await nextTrack();
-  });
+  elements.playpauseBtn.addEventListener("click", async () => { await playPause(); });
+  elements.prevBtn.addEventListener("click", async () => { await prevTrack(); });
+  elements.nextBtn.addEventListener("click", async () => { await nextTrack(); });
   elements.volumeRange.addEventListener("input", async () => {
     const vol = parseInt(elements.volumeRange.value);
-    if (premium) {
-      await setDeviceVolume(vol);
-    } else {
-      await setVolume(vol);
-    }
-  });
-  let seekLock = false;
-  elements.seekRange.addEventListener("input", () => {
-    seekLock = true;
+    if (premium) await setDeviceVolume(vol);
+    else await setVolume(vol);
   });
   elements.seekRange.addEventListener("change", async () => {
     const pos = parseInt(elements.seekRange.value);
     await seekMs(pos);
-    seekLock = false;
   });
   elements.devicePicker.addEventListener("change", async () => {
     const id = elements.devicePicker.value;
@@ -294,11 +225,9 @@ function hookControls() {
     lastInteractionTs = Date.now();
     elements.screensaver.classList.remove("active");
   };
-  ["mousemove", "keydown", "pointerdown", "touchstart"].forEach((e) => window.addEventListener(e, poke, { passive: true }));
+  ["mousemove","keydown","pointerdown","touchstart"].forEach(e => window.addEventListener(e, poke, { passive: true }));
   setInterval(() => {
-    if (Date.now() - lastInteractionTs > 30000) {
-      elements.screensaver.classList.add("active");
-    }
+    if (Date.now() - lastInteractionTs > 30000) elements.screensaver.classList.add("active");
   }, 1000);
 }
 
@@ -320,16 +249,13 @@ function hookLayout() {
   onResize();
 
   const fps = fpsMeter();
-  setInterval(() => {
-    elements.fpsLabel.textContent = `FPS: ${fps.value().toFixed(0)}`;
-  }, 500);
-  elements.gpuLabel.textContent = gpuLabel();
+  setInterval(() => { elements.fpsLabel.textContent = `FPS: ${fps.value().toFixed(0)}`; }, 500);
+  elements.gpuLabelEl.textContent = gpuLabel() + (isWebGL2Capable() ? " • WebGL2" : " • WebGL1");
 }
 
 async function onPlayerState() {
-  const st = await currentState();
+  const st = await currentState().catch(() => null);
   if (!st) return;
-
   const duration = st.item?.duration_ms ?? 0;
   const position = st.progress_ms ?? 0;
   if (duration && !isNaN(duration)) {
@@ -341,43 +267,23 @@ async function onPlayerState() {
   }
   if (st.item) {
     elements.trackTitle.textContent = st.item.name;
-    elements.trackArtist.textContent = st.item.artists.map((a) => a.name).join(", ");
+    elements.trackArtist.textContent = st.item.artists.map(a => a.name).join(", ");
     const coverUrl = st.item.album.images[0]?.url;
     if (coverUrl) {
-      const cached = await getCachedCover(st.item.id, coverUrl);
+      const cached = await getCachedCover(st.item.id, coverUrl).catch(() => null);
       const src = cached?.objectUrl ?? coverUrl;
       elements.coverImg.src = src;
-      const pal = cached?.palette ?? (await extractPalette(src));
+      const pal = cached?.palette ?? await extractPalette(src).catch(() => ["#59ffa9","#5aaaff","#ff59be","#ffe459","#ff8a59"]);
       setUIPalette(pal);
-      updatePalette(pal.map((c) => c));
+      updatePalette(pal.map(c => c));
       savePaletteForTrack(st.item.id, coverUrl, pal).catch(() => {});
     }
     cacheTrackMeta(st.item).catch(() => {});
   }
 }
 
-function disableUnsupportedScenesIfNeeded() {
-  const supported = isWebGL2Capable();
-  if (!supported) {
-    // Disable heavy scenes on WebGL1 to avoid shader errors
-    ["tunnel", "terrain", "fluid"].forEach((id) => {
-      const opt = elements.scenePicker.querySelector(`option[value="${id}"]`) as HTMLOptionElement | null;
-      if (opt) {
-        opt.disabled = true;
-        opt.textContent = `${opt.textContent || id} (unsupported)`;
-      }
-    });
-  }
-}
-
 async function main() {
-  initAuthUI({
-    loginButton: elements.loginBtn,
-    clientId: CLIENT_ID,
-    redirectUri: REDIRECT_URI,
-    scopes
-  });
-
+  initAuthUI({ loginButton: elements.loginBtn, clientId: CLIENT_ID, redirectUri: REDIRECT_URI, scopes });
   await ensureAuth(CLIENT_ID, REDIRECT_URI, scopes);
 
   const token = await getAccessToken();
@@ -387,17 +293,13 @@ async function main() {
   }
 
   initAPI(() => getAccessToken());
-
   premium = await isPremium();
   updateModeLabel();
 
   const canvas = document.getElementById("vis") as HTMLCanvasElement;
   await initEngine(canvas);
 
-  disableUnsupportedScenesIfNeeded();
-
   hookQualityPanel();
-  elements.qScale.dispatchEvent(new Event("input"));
   hookAccessibility();
   hookVJ();
   hookControls();
@@ -414,9 +316,7 @@ async function main() {
         await transferPlayback(deviceId, true);
       }
     },
-    () => {
-      onPlayerState();
-    }
+    () => { onPlayerState(); }
   );
 
   await refreshDevices();
@@ -434,26 +334,17 @@ async function main() {
     },
     onPhraseBoundary: () => {
       const selected = elements.scenePicker.value;
-      if (selected === "auto") {
-        autoPickScene();
-      } else {
-        crossfadeToScene(selected as any, 1.2);
-      }
+      if (selected === "auto") autoPickScene();
+      else crossfadeToScene(selected as any, 1.0);
     },
     elements
   });
 
   setFrameGovernorTarget(60);
   setInterval(onPlayerState, 1000);
-
-  elements.scenePicker.addEventListener("change", () => {
-    const v = elements.scenePicker.value;
-    if (v === "auto") autoPickScene();
-    else crossfadeToScene(v as any, 1.0);
-  });
 }
 
-main().catch((err) => {
+main().catch(err => {
   console.error(err);
   alert("Initialization error. Check console.");
 });

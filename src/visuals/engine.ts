@@ -4,6 +4,7 @@ import { Fluid2DScene } from "./scenes/Fluid2D";
 import { TunnelScene } from "./scenes/RaymarchTunnel";
 import { TerrainScene } from "./scenes/Terrain";
 import { TypographyScene } from "./scenes/Typography";
+import { BasicScene } from "./scenes/Basic";
 
 type Quality = {
   renderScale: number;
@@ -41,8 +42,11 @@ let accessibility: Accessibility;
 let currentPalette: string[] = ["#59ffa9", "#5aaaff", "#ff59be", "#ffe459", "#ff8a59"];
 let frameGovTarget = 60;
 let clock = new THREE.Clock();
+let safeMode = false;
+let renderErrorCount = 0;
 
 const scenes: Record<string, new (opts: SceneOptions) => IScene> = {
+  basic: BasicScene as any,
   particles: ParticlesScene,
   fluid: Fluid2DScene,
   tunnel: TunnelScene,
@@ -76,14 +80,19 @@ export async function initEngine(canvas: HTMLCanvasElement) {
     canvas,
     antialias: false,
     powerPreference: "high-performance",
-    alpha: false,
-    depth: true,
-    stencil: false,
-    preserveDrawingBuffer: false
+    alpha: false
   });
+  // Color/tone defaults
+  (renderer as any).outputColorSpace = (THREE as any).SRGBColorSpace || (renderer as any).outputEncoding;
+  if ((renderer as any).outputEncoding !== undefined) {
+    (renderer as any).outputEncoding = (THREE as any).sRGBEncoding ?? (renderer as any).outputEncoding;
+  }
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.0;
+
   renderer.debug.checkShaderErrors = true;
   renderer.autoClear = true;
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
   const cw = canvas.clientWidth || window.innerWidth || 1280;
   const ch = canvas.clientHeight || window.innerHeight || 720;
   renderer.setSize(cw, ch, false);
@@ -96,18 +105,18 @@ export async function initEngine(canvas: HTMLCanvasElement) {
     renderScale: 1.0,
     msaa: 0,
     taa: false,
-    bloom: 0.8,
-    ssao: true,
+    bloom: 0.0,
+    ssao: false,
     motionBlur: false,
     dof: false,
     toneMap: "filmic",
-    chromaticAberration: 0.12,
-    volumetrics: true,
-    raymarchSteps: 512,
-    softShadowSamples: 16,
-    particleCount: 1_000_000,
-    fluidResolution: 512,
-    fluidIterations: 30,
+    chromaticAberration: 0.0,
+    volumetrics: false,
+    raymarchSteps: 384,
+    softShadowSamples: 8,
+    particleCount: 500_000,
+    fluidResolution: 384,
+    fluidIterations: 20,
     webgpuPathTrace: false
   };
   accessibility = {
@@ -117,8 +126,9 @@ export async function initEngine(canvas: HTMLCanvasElement) {
     highContrast: false
   };
 
-  // default scene
-  active = new ParticlesScene({
+  // Choose initial scene based on capability
+  const initial = isWebGL2Capable() ? "particles" : "basic";
+  active = new (scenes[initial])({
     renderer,
     camera,
     quality: () => quality,
@@ -139,15 +149,26 @@ export async function initEngine(canvas: HTMLCanvasElement) {
 }
 
 export function isWebGL2Capable(): boolean {
-  return !!renderer?.capabilities.isWebGL2;
+  try {
+    const gl2 = (renderer as any)?.getContext?.("webgl2");
+    return !!gl2;
+  } catch {
+    return false;
+  }
 }
 
 function allowedScenesList(): Array<keyof typeof scenes> {
-  // On WebGL1, restrict to simpler scenes to avoid shader compile errors on some GPUs.
-  if (!isWebGL2Capable()) {
-    return ["particles", "type"];
+  if (safeMode || !isWebGL2Capable()) {
+    return ["basic", "particles", "type"];
   }
-  return ["particles", "fluid", "tunnel", "terrain", "type"];
+  return ["particles", "fluid", "tunnel", "terrain", "type", "basic"];
+}
+
+export function setSafeMode(on: boolean) {
+  safeMode = on;
+  if (safeMode) {
+    setScene("basic");
+  }
 }
 
 export function getEngineCanvas() {
@@ -158,7 +179,7 @@ export function resizeEngine(w: number, h: number, dpr: number) {
   if (!renderer || !camera || !canvasEl) return;
   const width = Math.max(1, w || canvasEl.clientWidth || window.innerWidth || 1);
   const height = Math.max(1, h || canvasEl.clientHeight || window.innerHeight || 1);
-  const scale = Math.max(1, Math.min(dpr || window.devicePixelRatio || 1, 2)) * (quality?.renderScale || 1);
+  const scale = Math.max(1, Math.min(dpr || window.devicePixelRatio || 1, 1.5)) * (quality?.renderScale || 1);
   renderer.setPixelRatio(scale);
   renderer.setSize(width, height, false);
   camera.aspect = width / height;
@@ -167,7 +188,7 @@ export function resizeEngine(w: number, h: number, dpr: number) {
 
 export function setQuality(q: Partial<Quality>) {
   quality = { ...quality, ...q };
-  if (!renderer || !canvasEl) return; // Guard until engine is ready
+  if (!renderer || !canvasEl) return;
   resizeEngine(canvasEl.clientWidth, canvasEl.clientHeight, window.devicePixelRatio);
   active.setQuality?.(quality);
   pending?.setQuality?.(quality);
@@ -185,14 +206,11 @@ export function setMacros(m: { intensity?: number; bloom?: number; glitch?: numb
 }
 
 export function setScene(name: keyof typeof scenes) {
-  // Enforce capability-based allowlist
   const allowed = new Set(allowedScenesList());
-  const pick = allowed.has(name) ? name : "particles";
+  const pick = allowed.has(name) ? name : "basic";
   const ctor = scenes[pick];
   if (!ctor || !renderer || !camera) return;
-  try {
-    active.stop();
-  } catch {}
+  try { active.stop(); } catch {}
   active = new ctor({
     renderer,
     camera,
@@ -205,86 +223,62 @@ export function setScene(name: keyof typeof scenes) {
 }
 
 export function crossfadeToScene(name: keyof typeof scenes, seconds = 1.0) {
-  const allowed = new Set(allowedScenesList());
-  const pick = allowed.has(name) ? name : "particles";
-  const ctor = scenes[pick];
-  if (!ctor || !renderer || !camera) return;
-
-  // If GL context isn't ready, just switch instantly.
-  const gl: WebGLRenderingContext | WebGL2RenderingContext | null = renderer.getContext
-    ? (renderer.getContext() as any)
-    : null;
-  if (!gl) {
-    setScene(pick);
+  if (safeMode || !isWebGL2Capable()) {
+    // Avoid GL blending paths that can fail on some GPUs
+    setScene(name);
     return;
   }
+  const allowed = new Set(allowedScenesList());
+  const pick = allowed.has(name) ? name : "basic";
+  const ctor = scenes[pick];
+  if (!ctor || !renderer || !camera) return;
+  if (pending) { try { pending.stop(); } catch {} pending = null; }
 
-  try {
-    if (pending) {
-      pending.stop();
+  pending = new ctor({
+    renderer,
+    camera,
+    quality: () => quality,
+    accessibility: () => accessibility,
+    palette: () => currentPalette
+  });
+  pending.setPalette(currentPalette);
+  pending.start();
+
+  const startT = performance.now();
+  const fade = () => {
+    if (!renderer || !camera || !pending) return;
+    const t = (performance.now() - startT) / 1000;
+    const k = Math.min(1, seconds > 0 ? t / seconds : 1);
+
+    // Simple two-pass composite using renderer state blending
+    const gl: any = (renderer as any).getContext?.() || null;
+    const state: any = (renderer as any).state;
+
+    try {
+      // Render A
+      renderer.setClearAlpha(1);
+      renderer.clear();
+      state.setBlending(THREE.NoBlending);
+      renderer.render((active as any).scene, camera);
+
+      // Render B on top with alpha
+      state.setBlending(THREE.NormalBlending, THREE.SrcAlphaFactor, THREE.OneMinusSrcAlphaFactor);
+      // simulate alpha via material opacity override if present (best-effort)
+      renderer.render((pending as any).scene, camera);
+      state.setBlending(THREE.NoBlending);
+    } catch {
+      setScene(pick);
+      return;
+    }
+
+    if (k < 1) requestAnimationFrame(fade);
+    else {
+      try { active.stop(); } catch {}
+      active = pending!;
       pending = null;
     }
-    pending = new ctor({
-      renderer,
-      camera,
-      quality: () => quality,
-      accessibility: () => accessibility,
-      palette: () => currentPalette
-    });
-    pending.setPalette(currentPalette);
-    pending.start();
-
-    const startT = performance.now();
-    const fade = () => {
-      if (!renderer || !camera || !pending) return;
-      const t = (performance.now() - startT) / 1000;
-      const k = Math.min(1, seconds > 0 ? t / seconds : 1);
-
-      renderScenesBlend(active, pending!, 1 - k, k, gl);
-
-      if (k < 1) requestAnimationFrame(fade);
-      else {
-        try {
-          active.stop();
-        } catch {}
-        active = pending!;
-        pending = null;
-      }
-    };
-    fade();
-  } catch {
-    // Fallback: instant switch if blending fails
-    setScene(pick);
-  }
-}
-
-function renderScenesBlend(a: IScene, b: IScene, aAlpha: number, bAlpha: number, gl: WebGLRenderingContext | WebGL2RenderingContext) {
-  const dt = clock.getDelta();
-  const t = performance.now() / 1000;
-  a.update(dt, t);
-  b.update(dt, t);
-  if (!renderer || !camera) return;
-
-  // Enable blending safely via GL context
-  gl.enable(gl.BLEND);
-  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-
-  renderer.autoClear = true;
-  renderer.setClearAlpha(1);
-  renderer.clear();
-
-  // Render A with alpha
-  (renderer as any).state.setBlending?.(THREE.NormalBlending, THREE.SrcAlphaFactor, THREE.OneMinusSrcAlphaFactor);
-  renderer.setClearAlpha(aAlpha);
-  renderer.render((a as any).scene, camera);
-
-  // Render B with alpha
-  renderer.setClearAlpha(bAlpha);
-  renderer.render((b as any).scene, camera);
-
-  // Reset
-  renderer.setClearAlpha(1);
-  gl.disable(gl.BLEND);
+  };
+  fade();
 }
 
 export function updatePalette(colors: string[]) {
@@ -304,18 +298,22 @@ export function startRender() {
     const dt = clock.getDelta();
     const t = performance.now() / 1000;
 
-    if (1 / Math.max(dt, 1e-6) < frameGovTarget - 5) {
+    if (1 / Math.max(dt, 1e-5) < frameGovTarget - 5) {
       active.onMacro?.("speed", 0.9);
     } else {
       active.onMacro?.("speed", 1.0);
     }
 
-    active.update(dt, t);
-    if (renderer && camera) {
-      try {
+    try {
+      active.update(dt, t);
+      if (renderer && camera) {
         renderer.render((active as any).scene, camera);
-      } catch {
-        // ignore single-frame render errors (e.g., transient shader compile on some GPUs)
+      }
+      renderErrorCount = 0;
+    } catch {
+      renderErrorCount++;
+      if (renderErrorCount > 3 && !safeMode) {
+        setSafeMode(true);
       }
     }
     requestAnimationFrame(loop);
