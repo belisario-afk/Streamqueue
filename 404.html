@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>dwdw</title>
+    <meta http-equiv="refresh" content="0;url=/dwdw/" />
+    <script>
+      // GitHub Pages SPA fallback: rewrite to index with original path stored in hash
+      (function() {
+        var l = window.location;
+        var path = l.pathname.replace(/^\/dwdw/, "");
+        if (path && path !== "/") {
+          l.replace("/dwdw/#" + path + l.search + l.hash);
+        }
+      })();
+    </script>
+  </head>
+  <body></body>
+</html>
