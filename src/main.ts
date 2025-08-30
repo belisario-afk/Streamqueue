@@ -37,17 +37,19 @@ import { initRecorder, toggleRecording } from "@recording/recorder";
 
 const CLIENT_ID = "927fda6918514f96903e828fcd6bb576";
 
-// Compute the repo base dynamically so this works for any repo name (e.g., Streamqueue or dwdw)
+// Compute the repo base dynamically so this works for any repo name (e.g., Streamqueue)
 const REPO_BASE = (() => {
   const parts = location.pathname.split("/").filter(Boolean);
   return parts.length ? `/${parts[0]}/` : "/";
 })();
 
-// Use fragment-based redirect to avoid GitHub Pages 404s on subpaths
+// IMPORTANT: Spotify does NOT accept fragment (#) in redirect_uri for Authorization Code flow.
+// Use a real path (/callback). GitHub Pages will serve public/404.html for this path,
+// which then rewrites to /#/callback so our SPA can read the code from the hash.
 const REDIRECT_URI =
   location.hostname === "127.0.0.1" || location.hostname === "localhost"
-    ? "http://127.0.0.1:5173/#/callback"
-    : `${location.origin}${REPO_BASE}#/callback`;
+    ? "http://127.0.0.1:5173/callback"
+    : `${location.origin}${REPO_BASE}callback`;
 
 const scopes = [
   "user-read-private",
@@ -430,7 +432,7 @@ async function main() {
         elements.beatDot.style.boxShadow = "none";
       }, 120);
     },
-    onPhraseBoundary: (phraseIndex) => {
+    onPhraseBoundary: () => {
       const selected = elements.scenePicker.value;
       if (selected === "auto") {
         autoPickScene();
