@@ -31,13 +31,11 @@ type Accessibility = {
   highContrast: boolean;
 };
 
-let renderer: THREE.WebGLRenderer;
-let sceneA: THREE.Scene;
-let sceneB: THREE.Scene;
-let camera: THREE.PerspectiveCamera;
+let renderer: THREE.WebGLRenderer | undefined;
+let camera: THREE.PerspectiveCamera | undefined;
 let active: IScene;
 let pending: IScene | null = null;
-let canvasEl: HTMLCanvasElement;
+let canvasEl: HTMLCanvasElement | undefined;
 let quality: Quality;
 let accessibility: Accessibility;
 let currentPalette: string[] = ["#59ffa9", "#5aaaff", "#ff59be", "#ffe459", "#ff8a59"];
@@ -84,17 +82,37 @@ export async function initEngine(canvas: HTMLCanvasElement) {
   camera.position.set(0, 0, 5);
 
   quality = {
-    renderScale: 1.0, msaa: 0, taa: false, bloom: 0.8, ssao: true, motionBlur: false, dof: false,
-    toneMap: "filmic", chromaticAberration: 0.12, volumetrics: true, raymarchSteps: 512, softShadowSamples: 16,
-    particleCount: 1_000_000, fluidResolution: 512, fluidIterations: 30, webgpuPathTrace: false
+    renderScale: 1.0,
+    msaa: 0,
+    taa: false,
+    bloom: 0.8,
+    ssao: true,
+    motionBlur: false,
+    dof: false,
+    toneMap: "filmic",
+    chromaticAberration: 0.12,
+    volumetrics: true,
+    raymarchSteps: 512,
+    softShadowSamples: 16,
+    particleCount: 1_000_000,
+    fluidResolution: 512,
+    fluidIterations: 30,
+    webgpuPathTrace: false
   };
   accessibility = {
-    epilepsySafe: false, intensityLimiter: 1.0, reducedMotion: false, highContrast: false
+    epilepsySafe: false,
+    intensityLimiter: 1.0,
+    reducedMotion: false,
+    highContrast: false
   };
 
   // default scene
   active = new ParticlesScene({
-    renderer, camera, quality: () => quality, accessibility: () => accessibility, palette: () => currentPalette
+    renderer,
+    camera,
+    quality: () => quality,
+    accessibility: () => accessibility,
+    palette: () => currentPalette
   });
   active.start();
 
@@ -110,10 +128,11 @@ export async function initEngine(canvas: HTMLCanvasElement) {
 }
 
 export function getEngineCanvas() {
-  return canvasEl;
+  return canvasEl!;
 }
 
 export function resizeEngine(w: number, h: number, dpr: number) {
+  if (!renderer || !camera || !canvasEl) return;
   renderer.setPixelRatio(Math.min(dpr, 2) * (quality?.renderScale || 1));
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
@@ -122,6 +141,7 @@ export function resizeEngine(w: number, h: number, dpr: number) {
 
 export function setQuality(q: Partial<Quality>) {
   quality = { ...quality, ...q };
+  if (!renderer || !canvasEl) return; // Guard until engine is ready
   resizeEngine(canvasEl.clientWidth, canvasEl.clientHeight, window.devicePixelRatio);
   active.setQuality?.(quality);
   pending?.setQuality?.(quality);
@@ -140,25 +160,40 @@ export function setMacros(m: { intensity?: number; bloom?: number; glitch?: numb
 
 export function setScene(name: keyof typeof scenes) {
   const ctor = scenes[name];
-  if (!ctor) return;
+  if (!ctor || !renderer || !camera) return;
   active.stop();
-  active = new ctor({ renderer, camera, quality: () => quality, accessibility: () => accessibility, palette: () => currentPalette });
+  active = new ctor({
+    renderer,
+    camera,
+    quality: () => quality,
+    accessibility: () => accessibility,
+    palette: () => currentPalette
+  });
   active.setPalette(currentPalette);
   active.start();
 }
 
 export function crossfadeToScene(name: keyof typeof scenes, seconds = 1.0) {
   const ctor = scenes[name];
-  if (!ctor) return;
-  if (pending) { pending.stop(); pending = null; }
-  pending = new ctor({ renderer, camera, quality: () => quality, accessibility: () => accessibility, palette: () => currentPalette });
+  if (!ctor || !renderer || !camera) return;
+  if (pending) {
+    pending.stop();
+    pending = null;
+  }
+  pending = new ctor({
+    renderer,
+    camera,
+    quality: () => quality,
+    accessibility: () => accessibility,
+    palette: () => currentPalette
+  });
   pending.setPalette(currentPalette);
   pending.start();
   const startT = performance.now();
   const fade = () => {
+    if (!renderer || !camera || !pending) return;
     const t = (performance.now() - startT) / 1000;
     const k = Math.min(1, t / seconds);
-    // simple crossfade: render pending on top with k alpha
     renderScenes(active, pending!, 1 - k, k);
     if (k < 1) requestAnimationFrame(fade);
     else {
@@ -175,11 +210,15 @@ function renderScenes(a: IScene, b: IScene, aAlpha: number, bAlpha: number) {
   const t = performance.now() / 1000;
   a.update(dt, t);
   b.update(dt, t);
+  if (!renderer || !camera) return;
   renderer.autoClear = true;
   renderer.setClearAlpha(1);
   renderer.clear();
   (renderer as any).context.enable((renderer as any).context.BLEND);
-  (renderer as any).context.blendFunc((renderer as any).context.SRC_ALPHA, (renderer as any).context.ONE_MINUS_SRC_ALPHA);
+  (renderer as any).context.blendFunc(
+    (renderer as any).context.SRC_ALPHA,
+    (renderer as any).context.ONE_MINUS_SRC_ALPHA
+  );
 
   renderer.setClearAlpha(aAlpha);
   renderer.render((a as any).scene, camera);
@@ -198,8 +237,7 @@ export function updatePalette(colors: string[]) {
 }
 
 export function autoPickScene() {
-  // simple heuristic: cycle based on time; could use audio features via director cache.
-  const order = ["particles","fluid","tunnel","terrain","type"] as const;
+  const order = ["particles", "fluid", "tunnel", "terrain", "type"] as const;
   const idx = Math.floor((Date.now() / 10000) % order.length);
   setScene(order[idx]);
 }
@@ -209,7 +247,6 @@ export function startRender() {
     const dt = clock.getDelta();
     const t = performance.now() / 1000;
 
-    // Adaptive governor (simple): if dt suggests < target fps, reduce quality iterations for fluid/particles next frame via macro "speed"
     if (1 / dt < frameGovTarget - 5) {
       active.onMacro?.("speed", 0.9);
     } else {
@@ -217,7 +254,9 @@ export function startRender() {
     }
 
     active.update(dt, t);
-    renderer.render((active as any).scene, camera);
+    if (renderer && camera) {
+      renderer.render((active as any).scene, camera);
+    }
     requestAnimationFrame(loop);
   };
   requestAnimationFrame(loop);

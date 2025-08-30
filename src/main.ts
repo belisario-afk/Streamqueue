@@ -1,7 +1,32 @@
 import { ensureAuth, getAccessToken, initAuthUI, isPremium } from "@auth/auth";
 import { initAPI } from "@spotify/api";
-import { initWebPlayback, connectWebPlayback, getDevices, transferPlayback, playPause, nextTrack, prevTrack, seekMs, setVolume, currentState, setDeviceVolume } from "@spotify/playback";
-import { initEngine, resizeEngine, setQuality, setMacros, setScene, autoPickScene, updatePalette, setAccessibility, startRender, setFrameGovernorTarget, crossfadeToScene, getEngineCanvas } from "@visuals/engine";
+import {
+  initWebPlayback,
+  connectWebPlayback,
+  getDevices,
+  transferPlayback,
+  playPause,
+  nextTrack,
+  prevTrack,
+  seekMs,
+  setVolume,
+  currentState,
+  setDeviceVolume
+} from "@spotify/playback";
+import {
+  initEngine,
+  resizeEngine,
+  setQuality,
+  setMacros,
+  setScene,
+  autoPickScene,
+  updatePalette,
+  setAccessibility,
+  startRender,
+  setFrameGovernorTarget,
+  crossfadeToScene,
+  getEngineCanvas
+} from "@visuals/engine";
 import { initDirector } from "@controllers/director";
 import { initVJ } from "@controllers/vj";
 import { savePaletteForTrack, getCachedCover, cacheTrackMeta } from "@utils/indexeddb";
@@ -11,9 +36,17 @@ import { formatTime } from "@utils/time";
 import { initRecorder, toggleRecording } from "@recording/recorder";
 
 const CLIENT_ID = "927fda6918514f96903e828fcd6bb576";
-const REDIRECT_URI = (location.hostname === "127.0.0.1" || location.hostname === "localhost")
-  ? "http://127.0.0.1:5173/callback"
-  : "https://belisario-afk.github.io/dwdw/callback";
+
+// Compute the repo base dynamically so this works for any repo name (e.g., Streamqueue or dwdw)
+const REPO_BASE = (() => {
+  const parts = location.pathname.split("/").filter(Boolean);
+  return parts.length ? `/${parts[0]}/` : "/";
+})();
+
+const REDIRECT_URI =
+  location.hostname === "127.0.0.1" || location.hostname === "localhost"
+    ? "http://127.0.0.1:5173/callback"
+    : `${location.origin}${REPO_BASE}callback`;
 
 const scopes = [
   "user-read-private",
@@ -106,7 +139,7 @@ function updateModeLabel() {
 async function refreshDevices() {
   const devices = await getDevices();
   elements.devicePicker.innerHTML = "";
-  devices.forEach(d => {
+  devices.forEach((d) => {
     const opt = document.createElement("option");
     opt.value = d.id || "";
     opt.textContent = `${d.name} ${d.is_active ? "•" : ""}`;
@@ -131,7 +164,7 @@ function hookQualityPanel() {
       dof: q.qDOF.checked,
       toneMap: q.qToneMap.value as any,
       chromaticAberration: parseFloat(q.qChroma.value),
-      volumetrics: q.qVol ? (q.qVol as any).checked : true,
+      volumetrics: (q.qVol as any)?.checked ?? true,
       raymarchSteps: parseInt(q.qSteps.value),
       softShadowSamples: parseInt(q.qSoft.value),
       particleCount: parseInt(q.qParticles.value),
@@ -145,16 +178,33 @@ function hookQualityPanel() {
     q.qChromaV.textContent = q.qChroma.value;
     q.qStepsV.textContent = q.qSteps.value;
     q.qSoftV.textContent = q.qSoft.value;
-    q.qParticlesV.textContent = `${(parseInt(q.qParticles.value)/1e6).toFixed(1)}M`;
+    q.qParticlesV.textContent = `${(parseInt(q.qParticles.value) / 1e6).toFixed(1)}M`;
     q.qFluidResV.textContent = `${q.qFluidRes.value}²`;
     q.qFluidItersV.textContent = q.qFluidIters.value;
   };
-  ["input","change"].forEach(evt => {
-    [q.qScale,q.qMSAA,q.qTAA,q.qBloom,q.qSSAO,q.qMoBlur,q.qDOF,q.qToneMap,q.qChroma,q.qVol,q.qSteps,q.qSoft,q.qParticles,q.qFluidRes,q.qFluidIters,q.qWebGPU].forEach(el => {
+  ["input", "change"].forEach((evt) => {
+    [
+      q.qScale,
+      q.qMSAA,
+      q.qTAA,
+      q.qBloom,
+      q.qSSAO,
+      q.qMoBlur,
+      q.qDOF,
+      q.qToneMap,
+      q.qChroma,
+      q.qVol,
+      q.qSteps,
+      q.qSoft,
+      q.qParticles,
+      q.qFluidRes,
+      q.qFluidIters,
+      q.qWebGPU
+    ].forEach((el) => {
       el?.addEventListener(evt, apply);
     });
   });
-  apply();
+  // Do not call apply() until engine is initialized; we trigger it after initEngine().
 }
 
 function hookAccessibility() {
@@ -169,8 +219,10 @@ function hookAccessibility() {
     setAccessibility(cfg);
     document.body.style.filter = cfg.highContrast ? "contrast(1.15) saturate(1.15)" : "";
   };
-  ["input","change"].forEach(evt => {
-    [elements.accEpilepsy,elements.accIntensity,elements.accReduced,elements.accContrast].forEach(el => el.addEventListener(evt, apply));
+  ["input", "change"].forEach((evt) => {
+    [elements.accEpilepsy, elements.accIntensity, elements.accReduced, elements.accContrast].forEach((el) =>
+      el.addEventListener(evt, apply)
+    );
   });
   apply();
 }
@@ -188,8 +240,8 @@ function hookVJ() {
     elements.vjGlitchV.textContent = parseFloat(elements.vjGlitch.value).toFixed(2);
     elements.vjSpeedV.textContent = parseFloat(elements.vjSpeed.value).toFixed(2);
   };
-  ["input","change"].forEach(evt => {
-    [elements.vjIntensity, elements.vjBloom, elements.vjGlitch, elements.vjSpeed].forEach(el => el.addEventListener(evt, apply));
+  ["input", "change"].forEach((evt) => {
+    [elements.vjIntensity, elements.vjBloom, elements.vjGlitch, elements.vjSpeed].forEach((el) => el.addEventListener(evt, apply));
   });
   apply();
 
@@ -213,7 +265,6 @@ function hookControls() {
   elements.volumeRange.addEventListener("input", async () => {
     const vol = parseInt(elements.volumeRange.value);
     if (premium) {
-      // if using Web Playback SDK, adjust device volume via API for consistency
       await setDeviceVolume(vol);
     } else {
       await setVolume(vol);
@@ -244,19 +295,39 @@ function hookControls() {
     lastInteractionTs = Date.now();
     elements.screensaver.classList.remove("active");
   };
-  ["mousemove","keydown","pointerdown","touchstart"].forEach(e => window.addEventListener(e, poke, { passive: true }));
+  ["mousemove", "keydown", "pointerdown", "touchstart"].forEach((e) => window.addEventListener(e, poke, { passive: true }));
   setInterval(() => {
     if (Date.now() - lastInteractionTs > 30000) {
       elements.screensaver.classList.add("active");
     }
   }, 1000);
 
-  // Recording
+  // Recording will be initialized after engine is ready.
+}
+
+function initRecordingUI() {
   initRecorder(getEngineCanvas(), (status) => {
     elements.recordStatus.textContent = status;
     elements.recordToggle.textContent = status.startsWith("recording") ? "Stop" : "Start";
   });
   elements.recordToggle.addEventListener("click", () => toggleRecording());
+}
+
+function hookLayout() {
+  const canvas = document.getElementById("vis") as HTMLCanvasElement | null;
+  const onResize = () => {
+    if (!canvas) return;
+    resizeEngine(canvas.clientWidth, canvas.clientHeight, window.devicePixelRatio);
+  };
+  window.addEventListener("resize", onResize);
+  onResize();
+
+  // FPS meter
+  const fps = fpsMeter();
+  setInterval(() => {
+    elements.fpsLabel.textContent = `FPS: ${fps.value().toFixed(0)}`;
+  }, 500);
+  elements.gpuLabel.textContent = gpuLabel();
 }
 
 async function onPlayerState() {
@@ -275,16 +346,16 @@ async function onPlayerState() {
   }
   if (st.item) {
     elements.trackTitle.textContent = st.item.name;
-    elements.trackArtist.textContent = st.item.artists.map(a => a.name).join(", ");
+    elements.trackArtist.textContent = st.item.artists.map((a) => a.name).join(", ");
     const coverUrl = st.item.album.images[0]?.url;
     if (coverUrl) {
       const cached = await getCachedCover(st.item.id, coverUrl);
       const src = cached?.objectUrl ?? coverUrl;
       elements.coverImg.src = src;
       // Palette extraction + theme
-      const pal = cached?.palette ?? await extractPalette(src);
+      const pal = cached?.palette ?? (await extractPalette(src));
       setUIPalette(pal);
-      updatePalette(pal.map(c => c));
+      updatePalette(pal.map((c) => c));
       savePaletteForTrack(st.item.id, coverUrl, pal).catch(() => {});
     }
     cacheTrackMeta(st.item).catch(() => {});
@@ -293,29 +364,8 @@ async function onPlayerState() {
   // Beat/phrase schedule & auto crossfade managed in director
 }
 
-function hookLayout() {
-  const canvas = document.getElementById("vis") as HTMLCanvasElement;
-  const onResize = () => {
-    resizeEngine(canvas.clientWidth, canvas.clientHeight, window.devicePixelRatio);
-  };
-  window.addEventListener("resize", onResize);
-  onResize();
-
-  // FPS meter
-  const fps = fpsMeter();
-  setInterval(() => {
-    elements.fpsLabel.textContent = `FPS: ${fps.value().toFixed(0)}`;
-  }, 500);
-  elements.gpuLabel.textContent = gpuLabel();
-}
-
 async function main() {
-  hookQualityPanel();
-  hookAccessibility();
-  hookVJ();
-  hookControls();
-  hookLayout();
-
+  // Wire login UI early
   initAuthUI({
     loginButton: elements.loginBtn,
     clientId: CLIENT_ID,
@@ -326,26 +376,45 @@ async function main() {
   await ensureAuth(CLIENT_ID, REDIRECT_URI, scopes);
 
   const token = await getAccessToken();
-  if (!token) return;
+  if (!token) {
+    // Not logged in yet, still set up basic controls to avoid errors
+    hookControls();
+    return;
+  }
 
   initAPI(() => getAccessToken());
 
   premium = await isPremium();
   updateModeLabel();
 
+  // Initialize rendering engine BEFORE any hooks that call it.
   const canvas = document.getElementById("vis") as HTMLCanvasElement;
   await initEngine(canvas);
 
-  await initWebPlayback(() => getAccessToken(), async (deviceId) => {
-    currentDeviceId = deviceId;
-    await refreshDevices();
-    if (premium) {
-      await connectWebPlayback();
-      await transferPlayback(deviceId, true);
+  // Now that engine exists, we can safely initialize UI hooks.
+  hookQualityPanel();
+  // Trigger one apply so quality takes effect after engine init
+  elements.qScale.dispatchEvent(new Event("input"));
+  hookAccessibility();
+  hookVJ();
+  hookControls();
+  hookLayout();
+  initRecordingUI();
+
+  await initWebPlayback(
+    () => getAccessToken(),
+    async (deviceId) => {
+      currentDeviceId = deviceId;
+      await refreshDevices();
+      if (premium) {
+        await connectWebPlayback();
+        await transferPlayback(deviceId, true);
+      }
+    },
+    (state) => {
+      onPlayerState();
     }
-  }, (state) => {
-    onPlayerState();
-  });
+  );
 
   await refreshDevices();
   autoPickScene();
@@ -365,7 +434,6 @@ async function main() {
       if (selected === "auto") {
         autoPickScene();
       } else {
-        // crossfade to currently selected (self-crossfade is a simple pulse)
         crossfadeToScene(selected as any, 1.2);
       }
     },
@@ -378,7 +446,7 @@ async function main() {
   // Update seek UI periodically
   setInterval(onPlayerState, 1000);
 
-  // Scene picker manual
+  // Scene picker manual crossfade
   elements.scenePicker.addEventListener("change", () => {
     const v = elements.scenePicker.value;
     if (v === "auto") autoPickScene();
@@ -386,7 +454,7 @@ async function main() {
   });
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error(err);
   alert("Initialization error. Check console.");
 });

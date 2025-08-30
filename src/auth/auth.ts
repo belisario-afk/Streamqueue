@@ -15,7 +15,12 @@ type TokenInfo = {
 
 let currentToken: TokenInfo | null = null;
 
-export function initAuthUI(opts: { loginButton: HTMLButtonElement, clientId: string, redirectUri: string, scopes: string[] }) {
+export function initAuthUI(opts: {
+  loginButton: HTMLButtonElement;
+  clientId: string;
+  redirectUri: string;
+  scopes: string[];
+}) {
   const { loginButton, clientId, redirectUri, scopes } = opts;
   loginButton.addEventListener("click", async () => {
     await login(clientId, redirectUri, scopes);
@@ -68,7 +73,7 @@ export async function ensureAuth(clientId: string, redirectUri: string, scopes: 
       console.error("Token exchange failed", await res.text());
       return;
     }
-    const data = await res.json() as Omit<TokenInfo, "obtained_at">;
+    const data = (await res.json()) as Omit<TokenInfo, "obtained_at">;
     currentToken = { ...data, obtained_at: Date.now() };
     setJSON(TOKEN_KEY, currentToken);
     // Replace path back to the app base dynamically (works for any repo name)
@@ -111,7 +116,7 @@ export async function refresh(clientId: string) {
     console.warn("Token refresh failed", await res.text());
     return;
   }
-  const data = await res.json() as Omit<TokenInfo, "obtained_at">;
+  const data = (await res.json()) as Omit<TokenInfo, "obtained_at">;
   currentToken = { ...data, obtained_at: Date.now(), refresh_token: currentToken.refresh_token };
   setJSON(TOKEN_KEY, currentToken);
 }
