@@ -1,124 +1,137 @@
-import { getCurrentPlayback, getCurrentTrackFeatures } from "@spotify/api";
 import { crossfadeToScene } from "@visuals/engine";
-import { cacheAnalysis, getCachedAnalysis } from "@utils/indexeddb";
+import { getCurrentPlayback, getCurrentTrackFeatures } from "@spotify/api";
 
-type DirectorOptions = {
-  onBeat: () => void;
-  onPhraseBoundary: (phraseIndex: number) => void;
-  elements: {
-    [k: string]: HTMLElement;
-  }
+// Minimal, defensive Director. If its UI isn't present, it silently no-ops.
+type DirectorInitOpts = {
+  onBeat?: (bar?: number) => void;
+  onPhraseBoundary?: (phraseIndex: number) => void;
+  elements?: any; // optional, not required
 };
 
-let beats: { start: number; duration: number; }[] = [];
-let bars: { start: number; duration: number; }[] = [];
-let sections: { start: number; duration: number; }[] = [];
-let trackId: string | null = null;
-let phraseIndex = 0;
+type Cue = {
+  bar: number;
+  type: string; // e.g., "explode", "scene:particles", etc.
+};
+
+let cues: Cue[] = [];
 let autoCrossfade = true;
-let cues: { bar: number; action: string }[] = [];
 
-function secondsToMs(s: number) { return Math.round(s * 1000); }
-
-export function initDirector(opts: DirectorOptions) {
-  const { onBeat, onPhraseBoundary, elements } = opts;
-  const autoChk = document.getElementById("dir-auto-crossfade") as HTMLInputElement;
-  autoChk.addEventListener("change", () => autoCrossfade = autoChk.checked);
-
-  const addBtn = document.getElementById("dir-add") as HTMLButtonElement;
-  const barNumEl = document.getElementById("dir-bar-num") as HTMLInputElement;
-  const cueTypeEl = document.getElementById("dir-cue-type") as HTMLSelectElement;
-  const list = document.getElementById("dir-list") as HTMLDivElement;
-  const clearBtn = document.getElementById("dir-clear") as HTMLButtonElement;
-
-  const renderList = () => {
-    if (!cues.length) { list.textContent = "No cues"; return; }
-    list.innerHTML = cues.map(c => `<div class="chip">bar ${c.bar} → ${c.action}</div>`).join(" ");
-  };
-
-  addBtn.addEventListener("click", () => {
-    const bar = parseInt(barNumEl.value);
-    const action = cueTypeEl.value;
-    if (Number.isFinite(bar)) {
-      cues.push({ bar, action });
-      renderList();
-      persistCues();
-    }
-  });
-  clearBtn.addEventListener("click", () => {
-    cues = [];
-    renderList();
-    persistCues();
-  });
-
-  // main scheduler loop
-  setInterval(async () => {
-    const pb = await getCurrentPlayback();
-    if (!pb?.item) return;
-    if (pb.item.id !== trackId) {
-      trackId = pb.item.id;
-      await loadAnalysis(trackId);
-      phraseIndex = 0;
-      await loadCues(trackId);
-      renderList();
-    }
-    const t = pb.progress_ms;
-    // beat detection: find nearest beat
-    const ibeat = beats.findIndex(b => secondsToMs(b.start) <= t && t < secondsToMs(b.start + b.duration));
-    if (ibeat >= 0) {
-      onBeat();
-    }
-    // phrase boundaries: every 4 bars
-    const ibar = bars.findIndex(b => secondsToMs(b.start) <= t && t < secondsToMs(b.start + b.duration));
-    if (ibar >= 0 && ibar % 4 === 0) {
-      if (phraseIndex !== ibar / 4) {
-        phraseIndex = ibar / 4;
-        onPhraseBoundary(phraseIndex);
-        if (autoCrossfade) {
-          // crossfade to a different scene cyclically
-          const order = ["particles","fluid","tunnel","terrain","type"];
-          const idx = phraseIndex % order.length;
-          crossfadeToScene(order[idx] as any, 1.5);
-        }
-      }
-    }
-    // apply cues at bar boundaries
-    const prevBar = Math.max(0, ibar);
-    const due = cues.filter(c => c.bar === prevBar + 1);
-    for (const cue of due) {
-      if (cue.action === "explode") {
-        // implemented in scenes via macro spike
-        const ev = new CustomEvent("vj-explode");
-        window.dispatchEvent(ev);
-      } else if (cue.action.startsWith("scene:")) {
-        const scene = cue.action.split(":")[1];
-        crossfadeToScene(scene as any, 1.2);
-      }
-    }
-  }, 250);
+function byId<T extends HTMLElement = HTMLElement>(id: string): T | null {
+  return (document.getElementById(id) as T) || null;
 }
 
-async function loadAnalysis(id: string) {
-  const cached = await getCachedAnalysis(id);
-  if (cached) {
-    beats = cached.analysis.beats;
-    bars = cached.analysis.bars;
-    sections = cached.analysis.sections;
+function updateCueList() {
+  const list = byId<HTMLDivElement>("dir-list");
+  if (!list) return;
+  if (!cues.length) {
+    list.textContent = "No cues";
     return;
   }
-  const { feats, analysis } = await getCurrentTrackFeatures(id);
-  beats = analysis.beats;
-  bars = analysis.bars;
-  sections = analysis.sections;
-  cacheAnalysis(id, { features: feats, analysis }).catch(() => {});
+  list.innerHTML = cues
+    .map((c) => `<div class="tag">bar ${c.bar}: ${c.type}</div>`)
+    .join("");
 }
 
-async function persistCues() {
-  if (!trackId) return;
-  localStorage.setItem(`dwdw.cues:${trackId}`, JSON.stringify(cues));
+function wireUI() {
+  const auto = byId<HTMLInputElement>("dir-auto-crossfade");
+  const barInput = byId<HTMLInputElement>("dir-bar-num");
+  const cueType = byId<HTMLSelectElement>("dir-cue-type");
+  const addBtn = byId<HTMLButtonElement>("dir-add");
+  const clearBtn = byId<HTMLButtonElement>("dir-clear");
+
+  auto?.addEventListener("change", () => {
+    autoCrossfade = !!auto.checked;
+  });
+
+  addBtn?.addEventListener("click", () => {
+    const bar = parseInt(barInput?.value || "1", 10) || 1;
+    const type = cueType?.value || "explode";
+    cues.push({ bar, type });
+    cues.sort((a, b) => a.bar - b.bar);
+    updateCueList();
+  });
+
+  clearBtn?.addEventListener("click", () => {
+    cues = [];
+    updateCueList();
+  });
+
+  updateCueList();
 }
 
-async function loadCues(id: string) {
-  const raw = localStorage.getItem(`dwdw.cues:${id}`);
-  cues = raw ? JSON.parse(raw) : [];
+function applyCue(cue: Cue) {
+  if (cue.type === "explode") {
+    // Could dispatch an event the engine listens to
+    window.dispatchEvent(new CustomEvent("vj-explode"));
+    return;
+  }
+  if (cue.type.startsWith("scene:")) {
+    const scene = cue.type.split(":")[1] as any;
+    crossfadeToScene(scene, 0); // safe instant switch
+    return;
+  }
+}
+
+async function pollPlayback(opts?: DirectorInitOpts) {
+  try {
+    const playback = await getCurrentPlayback().catch(() => null);
+    if (!playback || !playback.item || !playback.is_playing) return;
+
+    const progressMs = playback.progress_ms ?? 0;
+    const features = await getCurrentTrackFeatures(playback.item.id).catch(() => null);
+    // If we have analysis/tempo, estimate bar length; else fallback to 2s
+    const beatDuration = features?.tempo ? 60_000 / features.tempo : 2000;
+    const barDuration = beatDuration * 4;
+    const barIndex = Math.floor(progressMs / barDuration);
+
+    // Fire onBeat (coarse)
+    opts?.onBeat?.(barIndex);
+
+    // Run any cues scheduled at this bar
+    cues
+      .filter((c) => c.bar === barIndex)
+      .forEach((c) => applyCue(c));
+
+    // Optional phrase switch
+    if (autoCrossfade && barIndex % 16 === 0 && barIndex > 0) {
+      opts?.onPhraseBoundary?.(barIndex / 16);
+      // Keep it conservative: switch within safe set if you derive scene elsewhere
+      // crossfadeToScene("particles" as any, 0);
+    }
+  } catch {
+    // swallow errors; this is a soft director
+  }
+}
+
+let intervalId: number | null = null;
+
+export function initDirector(opts: DirectorInitOpts = {}) {
+  // Wire UI only if present
+  wireUI();
+
+  // Start polling playback to drive beats/phrases/cues
+  if (intervalId !== null) {
+    clearInterval(intervalId);
+    intervalId = null;
+  }
+  intervalId = window.setInterval(() => {
+    pollPlayback(opts);
+  }, 500);
+
+  return {
+    addCue(bar: number, type: string) {
+      cues.push({ bar, type });
+      cues.sort((a, b) => a.bar - b.bar);
+      updateCueList();
+    },
+    clearCues() {
+      cues = [];
+      updateCueList();
+    },
+    setAutoCrossfade(on: boolean) {
+      autoCrossfade = on;
+      const auto = byId<HTMLInputElement>("dir-auto-crossfade");
+      if (auto) auto.checked = on;
+    }
+  };
 }
