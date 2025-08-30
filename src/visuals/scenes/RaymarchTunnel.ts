@@ -12,39 +12,32 @@ type Opts = {
 export class TunnelScene implements IScene {
   name = "tunnel";
   scene = new THREE.Scene();
-
   private mesh: THREE.Mesh | null = null;
   private uniforms: Record<string, THREE.IUniform> = {};
   private cfg: SceneConfig;
 
   constructor(private opts: Opts) {
     this.cfg = {
-      steps: 256,
-      speed: 0.7,
-      twist: 1.0,
-      radius: 1.2,
-      brightness: 1.0
+      steps: 224,
+      speed: 0.65,
+      twist: 0.9,
+      radius: 1.15,
+      brightness: 0.9
     };
     this.build();
   }
 
   getConfigSchema(): SceneConfigSchema {
     return {
-      steps: { label: "Ray steps", type: "range", min: 64, max: 768, step: 32, default: 256 },
-      speed: { label: "Motion speed", type: "range", min: 0.2, max: 2, step: 0.05, default: 0.7 },
-      twist: { label: "Twist", type: "range", min: 0, max: 2.5, step: 0.05, default: 1.0 },
-      radius: { label: "Radius", type: "range", min: 0.6, max: 2.5, step: 0.05, default: 1.2 },
-      brightness: { label: "Brightness", type: "range", min: 0.5, max: 2.0, step: 0.05, default: 1.0 }
+      steps: { label: "Ray steps", type: "range", min: 64, max: 640, step: 32, default: 224 },
+      speed: { label: "Motion speed", type: "range", min: 0.2, max: 2, step: 0.05, default: 0.65 },
+      twist: { label: "Twist", type: "range", min: 0, max: 2.0, step: 0.05, default: 0.9 },
+      radius: { label: "Radius", type: "range", min: 0.7, max: 2.0, step: 0.05, default: 1.15 },
+      brightness: { label: "Brightness", type: "range", min: 0.4, max: 1.5, step: 0.05, default: 0.9 }
     };
   }
-
-  getConfig(): SceneConfig {
-    return { ...this.cfg };
-  }
-
-  setConfig(partial: Partial<SceneConfig>) {
-    this.cfg = { ...this.cfg, ...partial };
-  }
+  getConfig(): SceneConfig { return { ...this.cfg }; }
+  setConfig(partial: Partial<SceneConfig>) { this.cfg = { ...this.cfg, ...partial }; }
 
   private build() {
     this.uniforms = {
@@ -75,7 +68,7 @@ export class TunnelScene implements IScene {
         uniform vec3 uPalette[5];
 
         float map(vec3 p){
-          float r = uRadius + 0.15*sin(p.z*0.7 + uTime*0.7);
+          float r = uRadius + 0.12*sin(p.z*0.6 + uTime*0.6);
           return length(p.xy) - r;
         }
 
@@ -83,27 +76,35 @@ export class TunnelScene implements IScene {
           vec3 a = uPalette[0];
           vec3 b = uPalette[1];
           vec3 c = uPalette[2];
-          return mix(a,b,0.5+0.5*sin(t)) + 0.25*c;
+          return mix(a,b,0.5+0.5*sin(t*0.5)) + 0.15*c;
         }
 
         void main(){
           vec3 ro = vec3(0.0,0.0, uTime*uSpeed*2.0);
           vec3 rd = normalize(vec3(vUv, 1.2));
-          float twist = uTwist*(0.4+0.6*sin(uTime*0.2));
-          rd.xy = mat2(cos(twist), -sin(twist), sin(twist), cos(twist))*rd.xy;
+          float tw = uTwist*(0.4+0.6*sin(uTime*0.2));
+          rd.xy = mat2(cos(tw), -sin(tw), sin(tw), cos(tw))*rd.xy;
 
           float t = 0.0;
           float glow = 0.0;
-          for (int i=0;i<768;i++){
+          vec3 acc = vec3(0.0);
+
+          for (int i=0;i<640;i++){
             if (float(i) >= uSteps) break;
             vec3 p = ro + rd * t;
             float d = map(p);
-            if (d < 0.002) { glow += 0.03; d = 0.005; }
-            t += d*0.6;
-            glow += 0.006/(0.01 + d*d*50.0);
-            if (t>30.0) break;
+            d = max(d, 0.0005);
+            t += d*0.65;
+
+            float g = 0.004/(0.006 + d*d*40.0);
+            glow += g;
+            if (t>28.0) break;
           }
-          vec3 col = pal(t*0.05) * glow * uBright;
+
+          glow = clamp(glow, 0.0, 2.2);
+          vec3 col = pal(t*0.06) * glow * uBright;
+          // Cheap tone map to avoid whiteout
+          col = col / (1.0 + col);
           gl_FragColor = vec4(col, 1.0);
         }
       `
@@ -116,10 +117,8 @@ export class TunnelScene implements IScene {
   setPalette(colors: string[]) {
     (this.mesh!.material as THREE.ShaderMaterial).uniforms.uPalette.value = colors.map((c) => new THREE.Color(c));
   }
-
   start(): void {}
   stop(): void {}
-
   update(_dt: number, t: number): void {
     const u = (this.mesh!.material as THREE.ShaderMaterial).uniforms;
     u.uTime.value = t;
@@ -129,8 +128,7 @@ export class TunnelScene implements IScene {
     u.uSpeed.value = Number(this.cfg.speed);
     u.uBright.value = Number(this.cfg.brightness);
   }
-
   onMacro(name: string, value: number): void {
-    if (name === "intensity") this.cfg.brightness = 0.8 + value * 0.8;
+    if (name === "intensity") this.cfg.brightness = 0.7 + value * 0.7;
   }
 }

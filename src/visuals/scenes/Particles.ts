@@ -29,13 +29,13 @@ export class ParticlesScene implements IScene {
     this.scene.add(this.group);
 
     this.cfg = {
-      particleCount: 600_000,
+      particleCount: 500_000,
       size: 2.0,
-      colorMode: "palette",
+      colorMode: "palette", // palette|rainbow|mono
       speed: 1.0,
-      curl: 0.8,
+      curl: 0.7,
       depthFade: true,
-      glow: 0.6
+      glow: 0.45
     };
 
     this.build();
@@ -43,13 +43,13 @@ export class ParticlesScene implements IScene {
 
   getConfigSchema(): SceneConfigSchema {
     return {
-      particleCount: { label: "Particle count", type: "range", min: 100000, max: 1500000, step: 50000, default: 600000, help: "Total points (higher is heavier)" },
-      size: { label: "Point size", type: "range", min: 0.5, max: 4, step: 0.1, default: 2.0 },
+      particleCount: { label: "Particle count", type: "range", min: 100000, max: 1200000, step: 50000, default: 500000, help: "Total points (higher is heavier)" },
+      size: { label: "Point size", type: "range", min: 0.5, max: 5, step: 0.1, default: 2.0 },
       colorMode: { label: "Color mode", type: "select", options: [{value:"palette",label:"Palette"},{value:"rainbow",label:"Rainbow"},{value:"mono",label:"Monochrome"}], default: "palette" },
       speed: { label: "Flow speed", type: "range", min: 0.2, max: 3, step: 0.05, default: 1.0 },
-      curl: { label: "Curl noise", type: "range", min: 0, max: 2, step: 0.05, default: 0.8 },
+      curl: { label: "Curl noise", type: "range", min: 0, max: 2, step: 0.05, default: 0.7 },
       depthFade: { label: "Depth fade", type: "checkbox", default: true },
-      glow: { label: "Glow", type: "range", min: 0, max: 1.2, step: 0.05, default: 0.6 }
+      glow: { label: "Glow", type: "range", min: 0, max: 1.2, step: 0.05, default: 0.45 }
     };
   }
   getConfig(): SceneConfig { return { ...this.cfg }; }
@@ -60,14 +60,14 @@ export class ParticlesScene implements IScene {
   }
 
   private build() {
-    const count = Math.min(Number(this.cfg.particleCount) || 600_000, this.opts.quality().particleBudget);
+    const count = Math.min(Number(this.cfg.particleCount) || 500_000, this.opts.quality().particleBudget);
     const positions = new Float32Array(count * 3);
     const seeds = new Float32Array(count * 4);
     const rng = Math.random;
     for (let i = 0; i < count; i++) {
-      const r = Math.pow(rng(), 0.7) * 8.0;
+      const r = Math.pow(rng(), 0.75) * 10.0;
       const a = rng() * Math.PI * 2;
-      const y = (rng() - 0.5) * 4;
+      const y = (rng() - 0.5) * 6.0;
       positions[i * 3 + 0] = Math.cos(a) * r;
       positions[i * 3 + 1] = y;
       positions[i * 3 + 2] = Math.sin(a) * r;
@@ -89,7 +89,6 @@ export class ParticlesScene implements IScene {
       uCurl: { value: Number(this.cfg.curl) },
       uSize: { value: Number(this.cfg.size) },
       uGlow: { value: Number(this.cfg.glow) },
-      uColorMode: { value: this.cfg.colorMode as string },
       uPalette: { value: palette },
       uDepthFade: { value: !!this.cfg.depthFade },
       uIntensity: { value: this.opts.accessibility().intensityLimiter }
@@ -107,21 +106,24 @@ export class ParticlesScene implements IScene {
         uniform float uSize;
         varying float vGlow;
         varying vec3 vPos;
+
         float s(float x){return fract(sin(x)*43758.5453123);}
         vec3 curl(vec3 p){
-          float n1 = s(p.y+uTime*0.1)+s(p.z*1.3);
-          float n2 = s(p.z+uTime*0.1)+s(p.x*1.1);
-          float n3 = s(p.x+uTime*0.1)+s(p.y*1.7);
+          float n1 = s(p.y+uTime*0.13)+s(p.z*1.37);
+          float n2 = s(p.z+uTime*0.11)+s(p.x*1.19);
+          float n3 = s(p.x+uTime*0.09)+s(p.y*1.73);
           return normalize(vec3(n1,n2,n3)*2.0-1.0);
         }
         void main(){
           vec3 p = position;
-          vec3 v = curl(p*0.15 + seed.xyz*0.02) * uCurl + normalize(vec3(-p.z*0.2, -p.y*0.05, p.x*0.2))*0.3;
+          vec3 v = curl(p*0.12 + seed.xyz*0.03) * uCurl + normalize(vec3(-p.z*0.15, -p.y*0.04, p.x*0.15))*0.28;
           p += v * (uSpeed*0.6);
-          vGlow = clamp(length(v)*0.8, 0.0, 1.0);
+          vGlow = clamp(length(v)*0.75, 0.0, 1.0);
           vPos = p;
           vec4 mv = modelViewMatrix * vec4(p,1.0);
-          gl_PointSize = uSize * (120.0 / -mv.z);
+          float depth = max(1.0, -mv.z);
+          float sizePx = uSize * (110.0 / depth);
+          gl_PointSize = clamp(sizePx, 0.5, 50.0);
           gl_Position = projectionMatrix * mv;
         }
       `,
@@ -135,26 +137,31 @@ export class ParticlesScene implements IScene {
         varying vec3 vPos;
 
         vec3 paletteColor(vec3 p){
-          float t = 0.5 + 0.5*sin(p.x*0.08 + p.z*0.05);
+          float t = 0.5 + 0.5*sin(p.x*0.06 + p.z*0.045);
           vec3 c = mix(uPalette[0], uPalette[1], t);
-          c = mix(c, uPalette[2], 0.35 + 0.35*sin(p.y*0.2));
+          c = mix(c, uPalette[2], 0.35 + 0.35*sin(p.y*0.18));
           return c;
         }
         void main(){
           vec2 uv = gl_PointCoord*2.0-1.0;
-          float mask = 1.0 - smoothstep(0.6,1.0,length(uv));
+          float r2 = dot(uv,uv);
+          if (r2>1.0) discard;
+          float mask = exp(-3.5*r2); // soft falloff
           vec3 col = paletteColor(vPos);
-          col += vGlow * uGlow * 0.7;
+          col *= 0.6; // base dim to avoid whiteout
+          col += vGlow * uGlow * 0.5;
           if(uDepthFade){
-            float df = clamp(1.0 - (abs(vPos.z)*0.04), 0.0, 1.0);
+            float df = clamp(1.0 - (abs(vPos.z)*0.035), 0.0, 1.0);
             col *= df*df;
           }
           col *= uIntensity;
-          gl_FragColor = vec4(col, mask);
-          if (gl_FragColor.a < 0.01) discard;
+          float alpha = mask * 0.7;
+          gl_FragColor = vec4(col, alpha);
+          if (gl_FragColor.a < 0.02) discard;
         }
       `,
       transparent: true,
+      depthTest: true,
       depthWrite: false,
       blending: THREE.AdditiveBlending
     });
@@ -168,7 +175,7 @@ export class ParticlesScene implements IScene {
   }
 
   private rebuildIfNeeded() {
-    const target = Math.min(Number(this.cfg.particleCount) || 600_000, this.opts.quality().particleBudget);
+    const target = Math.min(Number(this.cfg.particleCount) || 500_000, this.opts.quality().particleBudget);
     const current = (this.geom?.getAttribute("position") as THREE.BufferAttribute | undefined)?.count || 0;
     if (Math.abs(current - target) > 10_000) {
       this.build();
@@ -207,7 +214,7 @@ export class ParticlesScene implements IScene {
 
   onMacro(name: string, value: number): void {
     if (name === "intensity") {
-      this.uniforms.uGlow.value = 0.3 + 0.9 * value;
+      this.uniforms.uGlow.value = 0.25 + 0.8 * value;
     }
   }
 }
