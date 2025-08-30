@@ -10,8 +10,8 @@
         var l = window.location;
         // repo name is the first path segment on user/organization pages
         var parts = l.pathname.split("/").filter(Boolean);
-        var repo = parts.length ? (parts[0]) : "";
-        var base = repo ? ("/" + repo + "/") : "/";
+        var repo = parts.length ? parts[0] : "";
+        var base = repo ? "/" + repo + "/" : "/";
         var origPath = l.pathname.replace(base, "/");
         // If we are not already at base, redirect to base with hash
         if (l.pathname !== base) {

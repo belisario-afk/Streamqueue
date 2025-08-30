@@ -14,5 +14,17 @@ export default defineConfig({
   },
   build: {
     target: "es2022"
+  },
+  resolve: {
+    alias: {
+      "@auth": "/src/auth",
+      "@spotify": "/src/spotify",
+      "@audio": "/src/audio",
+      "@visuals": "/src/visuals",
+      "@controllers": "/src/controllers",
+      "@ui": "/src/ui",
+      "@utils": "/src/utils",
+      "@recording": "/src/recording"
+    }
   }
 });

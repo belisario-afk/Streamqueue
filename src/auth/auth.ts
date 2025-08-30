@@ -71,7 +71,10 @@ export async function ensureAuth(clientId: string, redirectUri: string, scopes: 
     const data = await res.json() as Omit<TokenInfo, "obtained_at">;
     currentToken = { ...data, obtained_at: Date.now() };
     setJSON(TOKEN_KEY, currentToken);
-    history.replaceState({}, "", "/dwdw/");
+    // Replace path back to the app base dynamically (works for any repo name)
+    const parts = location.pathname.split("/").filter(Boolean);
+    const base = parts.length ? `/${parts[0]}/` : "/";
+    history.replaceState({}, "", base);
     return;
   }
   currentToken = getJSON<TokenInfo>(TOKEN_KEY);
