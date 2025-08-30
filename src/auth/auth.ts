@@ -102,7 +102,7 @@ export async function ensureAuth(clientId: string, redirectUri: string, scopes: 
     return;
   }
 
-  // Load token and refresh if needed (note: refresh requires refresh_token which Spotify may include)
+  // Load token and refresh if needed
   currentToken = getJSON<TokenInfo>(TOKEN_KEY);
   if (currentToken && isExpired(currentToken)) {
     await refresh(clientId);

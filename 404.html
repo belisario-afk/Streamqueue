@@ -16,7 +16,6 @@
         var repo = parts.length ? parts[0] : "";
         var base = repo ? "/" + repo + "/" : "/";
         var origPath = l.pathname.replace(base, "/");
-        // Redirect to app base with original path + query moved into the hash.
         // Example:
         //   /Streamqueue/callback?code=... -> /Streamqueue/#/callback?code=...
         l.replace(base + "#" + origPath + l.search + l.hash);
