@@ -72,13 +72,24 @@ export interface IScene {
 
 export async function initEngine(canvas: HTMLCanvasElement) {
   canvasEl = canvas;
-  renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: "high-performance" });
+  renderer = new THREE.WebGLRenderer({
+    canvas,
+    antialias: false,
+    powerPreference: "high-performance",
+    alpha: false,
+    depth: true,
+    stencil: false,
+    preserveDrawingBuffer: false
+  });
+  renderer.debug.checkShaderErrors = true;
   renderer.autoClear = true;
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
-  renderer.setClearColor(0x040406);
+  const cw = canvas.clientWidth || window.innerWidth || 1280;
+  const ch = canvas.clientHeight || window.innerHeight || 720;
+  renderer.setSize(cw, ch, false);
+  renderer.setClearColor(0x040406, 1);
 
-  camera = new THREE.PerspectiveCamera(60, canvas.clientWidth / canvas.clientHeight, 0.1, 2000);
+  camera = new THREE.PerspectiveCamera(60, cw / ch, 0.1, 2000);
   camera.position.set(0, 0, 5);
 
   quality = {
@@ -127,15 +138,30 @@ export async function initEngine(canvas: HTMLCanvasElement) {
   });
 }
 
+export function isWebGL2Capable(): boolean {
+  return !!renderer?.capabilities.isWebGL2;
+}
+
+function allowedScenesList(): Array<keyof typeof scenes> {
+  // On WebGL1, restrict to simpler scenes to avoid shader compile errors on some GPUs.
+  if (!isWebGL2Capable()) {
+    return ["particles", "type"];
+  }
+  return ["particles", "fluid", "tunnel", "terrain", "type"];
+}
+
 export function getEngineCanvas() {
   return canvasEl!;
 }
 
 export function resizeEngine(w: number, h: number, dpr: number) {
   if (!renderer || !camera || !canvasEl) return;
-  renderer.setPixelRatio(Math.min(dpr, 2) * (quality?.renderScale || 1));
-  renderer.setSize(w, h, false);
-  camera.aspect = w / h;
+  const width = Math.max(1, w || canvasEl.clientWidth || window.innerWidth || 1);
+  const height = Math.max(1, h || canvasEl.clientHeight || window.innerHeight || 1);
+  const scale = Math.max(1, Math.min(dpr || window.devicePixelRatio || 1, 2)) * (quality?.renderScale || 1);
+  renderer.setPixelRatio(scale);
+  renderer.setSize(width, height, false);
+  camera.aspect = width / height;
   camera.updateProjectionMatrix();
 }
 
@@ -159,9 +185,14 @@ export function setMacros(m: { intensity?: number; bloom?: number; glitch?: numb
 }
 
 export function setScene(name: keyof typeof scenes) {
-  const ctor = scenes[name];
+  // Enforce capability-based allowlist
+  const allowed = new Set(allowedScenesList());
+  const pick = allowed.has(name) ? name : "particles";
+  const ctor = scenes[pick];
   if (!ctor || !renderer || !camera) return;
-  active.stop();
+  try {
+    active.stop();
+  } catch {}
   active = new ctor({
     renderer,
     camera,
@@ -174,60 +205,86 @@ export function setScene(name: keyof typeof scenes) {
 }
 
 export function crossfadeToScene(name: keyof typeof scenes, seconds = 1.0) {
-  const ctor = scenes[name];
+  const allowed = new Set(allowedScenesList());
+  const pick = allowed.has(name) ? name : "particles";
+  const ctor = scenes[pick];
   if (!ctor || !renderer || !camera) return;
-  if (pending) {
-    pending.stop();
-    pending = null;
+
+  // If GL context isn't ready, just switch instantly.
+  const gl: WebGLRenderingContext | WebGL2RenderingContext | null = renderer.getContext
+    ? (renderer.getContext() as any)
+    : null;
+  if (!gl) {
+    setScene(pick);
+    return;
   }
-  pending = new ctor({
-    renderer,
-    camera,
-    quality: () => quality,
-    accessibility: () => accessibility,
-    palette: () => currentPalette
-  });
-  pending.setPalette(currentPalette);
-  pending.start();
-  const startT = performance.now();
-  const fade = () => {
-    if (!renderer || !camera || !pending) return;
-    const t = (performance.now() - startT) / 1000;
-    const k = Math.min(1, t / seconds);
-    renderScenes(active, pending!, 1 - k, k);
-    if (k < 1) requestAnimationFrame(fade);
-    else {
-      active.stop();
-      active = pending!;
+
+  try {
+    if (pending) {
+      pending.stop();
       pending = null;
     }
-  };
-  fade();
+    pending = new ctor({
+      renderer,
+      camera,
+      quality: () => quality,
+      accessibility: () => accessibility,
+      palette: () => currentPalette
+    });
+    pending.setPalette(currentPalette);
+    pending.start();
+
+    const startT = performance.now();
+    const fade = () => {
+      if (!renderer || !camera || !pending) return;
+      const t = (performance.now() - startT) / 1000;
+      const k = Math.min(1, seconds > 0 ? t / seconds : 1);
+
+      renderScenesBlend(active, pending!, 1 - k, k, gl);
+
+      if (k < 1) requestAnimationFrame(fade);
+      else {
+        try {
+          active.stop();
+        } catch {}
+        active = pending!;
+        pending = null;
+      }
+    };
+    fade();
+  } catch {
+    // Fallback: instant switch if blending fails
+    setScene(pick);
+  }
 }
 
-function renderScenes(a: IScene, b: IScene, aAlpha: number, bAlpha: number) {
+function renderScenesBlend(a: IScene, b: IScene, aAlpha: number, bAlpha: number, gl: WebGLRenderingContext | WebGL2RenderingContext) {
   const dt = clock.getDelta();
   const t = performance.now() / 1000;
   a.update(dt, t);
   b.update(dt, t);
   if (!renderer || !camera) return;
+
+  // Enable blending safely via GL context
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
   renderer.autoClear = true;
   renderer.setClearAlpha(1);
   renderer.clear();
-  (renderer as any).context.enable((renderer as any).context.BLEND);
-  (renderer as any).context.blendFunc(
-    (renderer as any).context.SRC_ALPHA,
-    (renderer as any).context.ONE_MINUS_SRC_ALPHA
-  );
 
+  // Render A with alpha
+  (renderer as any).state.setBlending?.(THREE.NormalBlending, THREE.SrcAlphaFactor, THREE.OneMinusSrcAlphaFactor);
   renderer.setClearAlpha(aAlpha);
   renderer.render((a as any).scene, camera);
 
+  // Render B with alpha
   renderer.setClearAlpha(bAlpha);
   renderer.render((b as any).scene, camera);
 
+  // Reset
   renderer.setClearAlpha(1);
-  (renderer as any).context.disable((renderer as any).context.BLEND);
+  gl.disable(gl.BLEND);
 }
 
 export function updatePalette(colors: string[]) {
@@ -237,7 +294,7 @@ export function updatePalette(colors: string[]) {
 }
 
 export function autoPickScene() {
-  const order = ["particles", "fluid", "tunnel", "terrain", "type"] as const;
+  const order = allowedScenesList();
   const idx = Math.floor((Date.now() / 10000) % order.length);
   setScene(order[idx]);
 }
@@ -247,7 +304,7 @@ export function startRender() {
     const dt = clock.getDelta();
     const t = performance.now() / 1000;
 
-    if (1 / dt < frameGovTarget - 5) {
+    if (1 / Math.max(dt, 1e-6) < frameGovTarget - 5) {
       active.onMacro?.("speed", 0.9);
     } else {
       active.onMacro?.("speed", 1.0);
@@ -255,7 +312,11 @@ export function startRender() {
 
     active.update(dt, t);
     if (renderer && camera) {
-      renderer.render((active as any).scene, camera);
+      try {
+        renderer.render((active as any).scene, camera);
+      } catch {
+        // ignore single-frame render errors (e.g., transient shader compile on some GPUs)
+      }
     }
     requestAnimationFrame(loop);
   };

@@ -25,7 +25,8 @@ import {
   startRender,
   setFrameGovernorTarget,
   crossfadeToScene,
-  getEngineCanvas
+  getEngineCanvas,
+  isWebGL2Capable
 } from "@visuals/engine";
 import { initDirector } from "@controllers/director";
 import { initVJ } from "@controllers/vj";
@@ -37,16 +38,12 @@ import { initRecorder, toggleRecording } from "@recording/recorder";
 
 const CLIENT_ID = "927fda6918514f96903e828fcd6bb576";
 
-// Compute the repo base dynamically so this works for any repo name (e.g., Streamqueue)
 const REPO_BASE = (() => {
   const parts = location.pathname.split("/").filter(Boolean);
   return parts.length ? `/${parts[0]}/` : "/";
 })();
 
-// Use the app root (no /callback) to avoid GitHub Pages 404s.
-// Register this exact URL in Spotify Dashboard:
-// - https://belisario-afk.github.io/Streamqueue/
-// - http://127.0.0.1:5173/
+// Use app root as redirect (register both URLs in Spotify Dashboard)
 const REDIRECT_URI =
   location.hostname === "127.0.0.1" || location.hostname === "localhost"
     ? "http://127.0.0.1:5173/"
@@ -58,7 +55,7 @@ const scopes = [
   "user-read-playback-state",
   "user-modify-playback-state",
   "user-read-currently-playing",
-  "streaming" // needed for Web Playback SDK (Premium)
+  "streaming"
 ];
 
 const elements = {
@@ -293,7 +290,6 @@ function hookControls() {
     else document.exitFullscreen?.();
   });
 
-  // idle screensaver
   const poke = () => {
     lastInteractionTs = Date.now();
     elements.screensaver.classList.remove("active");
@@ -323,7 +319,6 @@ function hookLayout() {
   window.addEventListener("resize", onResize);
   onResize();
 
-  // FPS meter
   const fps = fpsMeter();
   setInterval(() => {
     elements.fpsLabel.textContent = `FPS: ${fps.value().toFixed(0)}`;
@@ -335,7 +330,6 @@ async function onPlayerState() {
   const st = await currentState();
   if (!st) return;
 
-  // UI seek + titles
   const duration = st.item?.duration_ms ?? 0;
   const position = st.progress_ms ?? 0;
   if (duration && !isNaN(duration)) {
@@ -353,7 +347,6 @@ async function onPlayerState() {
       const cached = await getCachedCover(st.item.id, coverUrl);
       const src = cached?.objectUrl ?? coverUrl;
       elements.coverImg.src = src;
-      // Palette extraction + theme
       const pal = cached?.palette ?? (await extractPalette(src));
       setUIPalette(pal);
       updatePalette(pal.map((c) => c));
@@ -363,8 +356,21 @@ async function onPlayerState() {
   }
 }
 
+function disableUnsupportedScenesIfNeeded() {
+  const supported = isWebGL2Capable();
+  if (!supported) {
+    // Disable heavy scenes on WebGL1 to avoid shader errors
+    ["tunnel", "terrain", "fluid"].forEach((id) => {
+      const opt = elements.scenePicker.querySelector(`option[value="${id}"]`) as HTMLOptionElement | null;
+      if (opt) {
+        opt.disabled = true;
+        opt.textContent = `${opt.textContent || id} (unsupported)`;
+      }
+    });
+  }
+}
+
 async function main() {
-  // Wire login UI early
   initAuthUI({
     loginButton: elements.loginBtn,
     clientId: CLIENT_ID,
@@ -376,7 +382,6 @@ async function main() {
 
   const token = await getAccessToken();
   if (!token) {
-    // Not logged in yet, still set up basic controls to avoid errors
     hookControls();
     return;
   }
@@ -386,11 +391,11 @@ async function main() {
   premium = await isPremium();
   updateModeLabel();
 
-  // Initialize rendering engine BEFORE any hooks that call it.
   const canvas = document.getElementById("vis") as HTMLCanvasElement;
   await initEngine(canvas);
 
-  // Now that engine exists, we can safely initialize UI hooks.
+  disableUnsupportedScenesIfNeeded();
+
   hookQualityPanel();
   elements.qScale.dispatchEvent(new Event("input"));
   hookAccessibility();
