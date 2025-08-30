@@ -43,10 +43,11 @@ const REPO_BASE = (() => {
   return parts.length ? `/${parts[0]}/` : "/";
 })();
 
+// Use fragment-based redirect to avoid GitHub Pages 404s on subpaths
 const REDIRECT_URI =
   location.hostname === "127.0.0.1" || location.hostname === "localhost"
-    ? "http://127.0.0.1:5173/callback"
-    : `${location.origin}${REPO_BASE}callback`;
+    ? "http://127.0.0.1:5173/#/callback"
+    : `${location.origin}${REPO_BASE}#/callback`;
 
 const scopes = [
   "user-read-private",

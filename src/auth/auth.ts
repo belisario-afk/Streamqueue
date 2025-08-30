@@ -54,16 +54,20 @@ function repoBase() {
 export async function ensureAuth(clientId: string, redirectUri: string, scopes: string[]) {
   const url = new URL(location.href);
 
-  // Case 1: Direct callback path (/.../callback?code=...)
-  const directCallback = url.pathname.endsWith("/callback");
-  let code = url.searchParams.get("code");
-  let error = url.searchParams.get("error");
+  // Case 1: We used fragment redirect (recommended): /<repo>/?code=...#/callback
+  // In this case, code is in the search params and "#/callback" is in the hash.
+  const codeFromSearch = url.searchParams.get("code");
+  const errorFromSearch = url.searchParams.get("error");
+  const hasHashCallback = (location.hash || "").startsWith("#/callback");
 
-  // Case 2: GitHub Pages 404 fallback put the callback into the hash:
-  // /<repo>/#/callback?code=...
-  const hash = location.hash || "";
-  const hashCallback = hash.startsWith("#/callback");
-  if (!directCallback && !code && !error && hashCallback) {
+  // Case 2: Direct callback path (/.../callback?code=...) if someone still uses path-based redirect
+  const directCallback = url.pathname.endsWith("/callback");
+  let code = codeFromSearch;
+  let error = errorFromSearch;
+
+  // Case 3: 404 fallback put the callback into the hash: /<repo>/#/callback?code=...
+  if (!code && !error && (location.hash || "").startsWith("#/callback")) {
+    const hash = location.hash;
     const qIndex = hash.indexOf("?");
     const q = qIndex >= 0 ? hash.slice(qIndex + 1) : "";
     const hParams = new URLSearchParams(q);
@@ -71,7 +75,7 @@ export async function ensureAuth(clientId: string, redirectUri: string, scopes: 
     error = hParams.get("error") || null;
   }
 
-  if ((directCallback || hashCallback) && (code || error)) {
+  if ((directCallback || hasHashCallback) && (code || error)) {
     if (error) {
       console.error("Spotify auth error:", error);
       return;
@@ -80,7 +84,7 @@ export async function ensureAuth(clientId: string, redirectUri: string, scopes: 
     const form = new URLSearchParams({
       grant_type: "authorization_code",
       code: code || "",
-      redirect_uri: redirectUri,
+      redirect_uri: redirectUri, // must match exactly what was used in authorize request
       client_id: clientId,
       code_verifier: codeVerifier
     });
@@ -97,7 +101,7 @@ export async function ensureAuth(clientId: string, redirectUri: string, scopes: 
     currentToken = { ...data, obtained_at: Date.now() };
     setJSON(TOKEN_KEY, currentToken);
 
-    // Clean URL back to the app base (removes /callback or #/callback and query)
+    // Clean URL back to the app base (removes ?code, ?error and any /callback or #/callback)
     history.replaceState({}, "", repoBase());
     return;
   }

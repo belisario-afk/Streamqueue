@@ -6,18 +6,15 @@
     <meta name="robots" content="noindex" />
     <script>
       // GitHub Pages SPA fallback:
-      // - Works for any repo name (e.g., /Streamqueue/).
-      // - If the requested path isn't found (like /callback), Pages serves this 404.html.
-      // - We redirect to the app base and preserve the original path + query in the hash.
+      // If a deep path like /Streamqueue/callback is requested, Pages serves this file.
+      // Redirect to the app base and preserve the original path + query in the hash.
       (function () {
         var l = window.location;
-        // repo name is the first path segment on user/organization pages
         var parts = l.pathname.split("/").filter(Boolean);
         var repo = parts.length ? parts[0] : "";
         var base = repo ? "/" + repo + "/" : "/";
         var origPath = l.pathname.replace(base, "/");
-        // Example:
-        //   /Streamqueue/callback?code=... -> /Streamqueue/#/callback?code=...
+        // Example: /Streamqueue/callback?code=... -> /Streamqueue/#/callback?code=...
         l.replace(base + "#" + origPath + l.search + l.hash);
       })();
     </script>
